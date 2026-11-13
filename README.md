@@ -27,24 +27,29 @@ L'app è l'unico processo che parla con l'inverter: nessun altro programma deve 
 
 ## Stato del repository
 
-- `solarmon.py` + `index.html`: versione **v1** funzionante (letta e collaudata sul campo).
-  Non include ancora file env, `/api/raw` e comandi Telegram.
-- La **v2** (env, ring buffer, `/api/raw`, bot Telegram con whitelist e audit) è descritta
-  in `docs/chat-solarmon-2026-11-13.md` e va importata/sovrascritta prima della Milestone 1.
+- `solarmon.py` + `index.html`: versione **v1** funzionante (letta e collaudata sul campo),
+  già irrobustita sui punti S1–S10 di `docs/SECURITY.md`.
+- `setup.sh` e `deploy/`: unit systemd con hardening e auto-restart, regola udev `0660`,
+  backup giornaliero con retention. Il servizio parte anche senza token Telegram.
+- La **v2** (lettura del file env, ring buffer, `/api/raw`, bot Telegram con whitelist e
+  audit) è descritta in `docs/chat-solarmon-2026-11-13.md` e va importata prima della
+  Milestone 1. Finché manca, le variabili arrivano comunque a processo via
+  `EnvironmentFile` di systemd.
 
-## Struttura prevista
+## Struttura
 
 ```
 solarmon/
-├── solarmon.py            # processo unico: lettura, storage, HTTP, alert
-├── index.html             # dashboard statica (nessuna build)
-├── solarmon.env.example   # modello di configurazione, senza segreti
-├── setup.sh               # installazione idempotente su Raspberry Pi OS
+├── solarmon.py             # processo unico: lettura, storage, HTTP, alert
+├── index.html              # dashboard statica (nessuna build)
+├── solarmon.env.example    # modello di configurazione, senza segreti
+├── setup.sh                # installazione idempotente su Raspberry Pi OS
 ├── deploy/
-│   ├── solarmon.service   # unit systemd con hardening
-│   ├── 99-inverter.rules  # udev: nome stabile /dev/inverter
-│   └── backup.sh          # backup SQLite + config
-├── tests/                 # pytest con fixture reali redatte
+│   ├── solarmon.service    # unit systemd con hardening e Restart=always
+│   ├── solarmon-backup.service / .timer
+│   ├── 99-inverter.rules   # udev: /dev/inverter, gruppo inverter, 0660
+│   └── backup.sh           # backup SQLite con retention
+├── tests/                  # pytest con fixture reali redatte
 └── docs/
     ├── DECISIONS.md       # scelte tecniche e motivazioni
     ├── RUNBOOK.md         # installazione, restore, rotazione token

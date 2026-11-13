@@ -44,7 +44,8 @@ persistente: leggere i log, non aumentare i tentativi.
 ## 3. Backup
 
 Il timer giornaliero esegue `sqlite3 .backup` (copia consistente anche con WAL attivo) e
-salva configurazione e unit:
+conserva gli ultimi 14 file. I segreti di `/etc/solarmon.env` non vengono copiati: restano
+nel gestore di password.
 
 ```bash
 systemctl list-timers solarmon-backup.timer

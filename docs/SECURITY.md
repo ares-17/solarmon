@@ -1,23 +1,23 @@
 # Security review — solarmon
 
 Revisione del codice v1 (`solarmon.py`, `index.html`) e del setup descritto nella chat.
-Ogni voce ha stato: **DA FARE** (non ancora corretto), **FATTO** (corretto nel repo) o
-**ACCETTATO** (rischio residuo motivato).
+Ogni voce ha stato: **DA FARE** (non ancora corretto), **PARZIALE** (corretto in v1, resta
+la parte v2), **FATTO** (corretto nel repo) o **ACCETTATO** (rischio residuo motivato).
 
 ## Riepilogo
 
 | ID | Gravità | Problema | Stato |
 |---|---|---|---|
-| S1 | Alta | Il token del bot Telegram finisce nei journal quando `urlopen` fallisce | DA FARE |
-| S2 | Alta | HTTP in ascolto su `0.0.0.0` senza autenticazione | DA FARE |
-| S3 | Alta | Servizio systemd come root (setup della chat) | DA FARE |
-| S4 | Media | `/dev/inverter` con `MODE=0666` (scrivibile da chiunque) | DA FARE |
-| S5 | Media | Nessun token su `/api/raw`: dati operativi esposti | DA FARE |
-| S6 | Media | Mosquitto senza auth e in ascolto su tutte le interfacce | DA FARE |
-| S7 | Bassa | Connessione SQLite aperta a ogni richiesta HTTP e mai chiusa | DA FARE |
-| S8 | Bassa | `os.makedirs(os.path.dirname(DB))` esplode se `DB_PATH` è relativo senza directory | DA FARE |
-| S9 | Bassa | Nessun header di sicurezza (CSP, nosniff) sulle risposte | DA FARE |
-| S10 | Bassa | Parametri HTTP non tutti limitati (finestra `/api/raw` in v2) | DA FARE |
+| S1 | Alta | Il token del bot Telegram finisce nei journal quando `urlopen` fallisce | FATTO |
+| S2 | Alta | HTTP in ascolto su `0.0.0.0` senza autenticazione | FATTO |
+| S3 | Alta | Servizio systemd come root (setup della chat) | FATTO |
+| S4 | Media | `/dev/inverter` con `MODE=0666` (scrivibile da chiunque) | FATTO |
+| S5 | Media | Nessun token su `/api/raw`: dati operativi esposti | DA FARE (v2) |
+| S6 | Media | Mosquitto senza auth e in ascolto su tutte le interfacce | FATTO (non installato) |
+| S7 | Bassa | Connessione SQLite aperta a ogni richiesta HTTP e mai chiusa | FATTO |
+| S8 | Bassa | `os.makedirs(os.path.dirname(DB))` esplode se `DB_PATH` è relativo senza directory | FATTO |
+| S9 | Bassa | Nessun header di sicurezza (CSP, nosniff) sulle risposte | FATTO |
+| S10 | Bassa | Parametri HTTP non tutti limitati (finestra `/api/raw` in v2) | PARZIALE (v1) |
 | S11 | Bassa | Nessun rate limit sulle rotte HTTP | ACCETTATO (loopback/Tailscale) |
 | S12 | Informativa | Il token Telegram viaggia nell'URL (limite dell'API Bot) | ACCETTATO + mitigazioni |
 
@@ -34,11 +34,9 @@ except Exception as e:
 `https://api.telegram.org/bot<TOKEN>/sendMessage`. Con un 4xx/5xx il token finisce in
 `journalctl`, nei backup dei log e in qualsiasi output condiviso.
 
-**Fix:** loggare solo il codice di stato e un messaggio noto:
+**Fix applicato:** loggare solo il tipo di eccezione, mai il messaggio:
 
 ```python
-except urllib.error.HTTPError as e:
-    log.error("telegram: HTTP %s", e.code)
 except Exception as e:
     log.error("telegram: %s", type(e).__name__)
 ```
@@ -126,14 +124,14 @@ Telegram perché il bot è controllabile da chi possiede l'account.
 
 ## Checklist prima della produzione
 
-- [ ] S1 token sanificato nei log
-- [ ] S2 bind su `127.0.0.1` e accesso via Tailscale
-- [ ] S3 utente dedicato + unit hardened
-- [ ] S4 udev `0660` con gruppo `inverter`
+- [x] S1 token sanificato nei log
+- [x] S2 bind su `127.0.0.1` e accesso via Tailscale
+- [x] S3 utente dedicato + unit hardened
+- [x] S4 udev `0660` con gruppo `inverter`
 - [ ] S5 `RAW_TOKEN` impostato (se `/api/raw` è raggiungibile)
-- [ ] S6 Mosquitto non installato o con auth e bind locale
-- [ ] S7/S8 fix a SQLite
-- [ ] S9 header di sicurezza
-- [ ] `ALLOW_WRITE=0` finché i comandi di scrittura non sono verificati sul modello
-- [ ] File env `0600`, proprietario root, gruppo `solarmon`
-- [ ] `.env`, DB e dump assenti dal repo (`git ls-files | grep -E '\.env$|\.db$'` vuoto)
+- [x] S6 Mosquitto non installato o con auth e bind locale
+- [x] S7/S8 fix a SQLite
+- [x] S9 header di sicurezza
+- [x] `ALLOW_WRITE=0` finché i comandi di scrittura non sono verificati sul modello
+- [x] File env `0600`, proprietario root, gruppo `solarmon`
+- [x] `.env`, DB e dump assenti dal repo (`git ls-files | grep -E '\.env$|\.db$'` vuoto)

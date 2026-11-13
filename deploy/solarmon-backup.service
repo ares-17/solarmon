@@ -1,0 +1,6 @@
+[Unit]
+Description=solarmon - backup del database
+
+[Service]
+Type=oneshot
+ExecStart=/opt/solarmon/backup.sh

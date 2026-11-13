@@ -1,0 +1,1 @@
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0665", ATTRS{idProduct}=="5161", SYMLINK+="inverter", GROUP="inverter", MODE="0660"

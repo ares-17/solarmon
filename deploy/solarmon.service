@@ -1,0 +1,43 @@
+[Unit]
+Description=solarmon - monitoraggio inverter solare
+Documentation=file:/opt/solarmon/README.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=solarmon
+Group=solarmon
+SupplementaryGroups=inverter
+WorkingDirectory=/opt/solarmon
+EnvironmentFile=/etc/solarmon.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/solarmon/.venv/bin/python /opt/solarmon/solarmon.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+StateDirectory=solarmon
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
