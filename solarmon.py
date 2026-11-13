@@ -128,6 +128,9 @@ def faults(ws): return [WS[i][0] for i in WS if ws[i:i + 1] == "1"]
 
 
 class Handler(BaseHTTPRequestHandler):
+    server_version = "solarmon"
+    sys_version = ""
+
     def log_message(self, *a): pass
 
     def out(self, body, ct="application/json"):
@@ -178,6 +181,7 @@ def mqtt_client():
 
 
 def main():
+    os.umask(0o077)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     os.makedirs(os.path.dirname(os.path.abspath(DB)), exist_ok=True)
     con = connect(); con.execute(SCHEMA); con.commit()
