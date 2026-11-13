@@ -5,6 +5,12 @@ cambia gli indici dei campi, il test fallisce prima che il dato sbagliato finisc
 """
 
 import importlib.util
+import json
+import logging
+import threading
+import urllib.request
+from contextlib import closing
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import fixtures
@@ -82,12 +88,10 @@ def test_parse_cfg_maps_values(solarmon):
     assert cfg["Priorita' carica"] == "Solo solare"
 
 
-@pytest.mark.xfail(
-    reason="v1 lascia il leading zero del protocollo: '020' invece di 20", strict=False
-)
 def test_parse_cfg_numeric_fields_have_no_leading_zeros(solarmon):
     cfg = solarmon.parse_cfg(fixtures.QPIRI)
-    assert cfg["Max carica A"] == 20
+    assert cfg["Max carica A"] == "20"
+    assert cfg["AC in V"] == "230.0"
 
 
 # --- QPIWS -----------------------------------------------------------------
@@ -114,3 +118,43 @@ def test_faults_ignore_non_fault_bits(solarmon):
 def test_modes_contains_fault_and_battery(solarmon):
     assert solarmon.MODES["F"] == "FAULT"
     assert solarmon.MODES["B"] == "Batteria"
+
+
+def test_notify_does_not_log_the_bot_token(solarmon, monkeypatch, caplog):
+    monkeypatch.setattr(solarmon, "TG_TOKEN", "123456:SECRET")
+    monkeypatch.setattr(solarmon, "TG_CHAT", "42")
+
+    def failing_urlopen(*args, **kwargs):
+        raise RuntimeError("HTTP Error 403: https://api.telegram.org/bot123456:SECRET/sendMessage")
+
+    monkeypatch.setattr(solarmon.urllib.request, "urlopen", failing_urlopen)
+    with caplog.at_level(logging.WARNING):
+        solarmon.notify("prova")
+    assert "SECRET" not in caplog.text
+    assert "RuntimeError" in caplog.text
+
+
+@pytest.fixture
+def server(solarmon):
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), solarmon.Handler)
+    httpd.daemon_threads = True
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    yield "http://127.0.0.1:%d" % httpd.server_port
+    httpd.shutdown()
+    httpd.server_close()
+
+
+def test_api_now_is_json_and_has_security_headers(server):
+    with closing(urllib.request.urlopen(server + "/api/now", timeout=5)) as response:
+        assert response.status == 200
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+        data = json.load(response)
+    assert "mode_name" in data
+    assert "faults" in data
+
+
+def test_dashboard_html_has_content_security_policy(server):
+    with closing(urllib.request.urlopen(server + "/", timeout=5)) as response:
+        assert response.status == 200
+        assert "default-src 'self'" in response.headers["Content-Security-Policy"]

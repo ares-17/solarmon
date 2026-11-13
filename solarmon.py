@@ -2,12 +2,14 @@
 """solarmon: inverter PI30 (hidraw) -> SQLite + dashboard web + alert Telegram + MQTT opzionale.
 Solo libreria standard (paho-mqtt solo se MQTT_HOST e' impostato). Solo letture: nessun comando di scrittura."""
 import json, logging, os, select, sqlite3, sys, threading, time, urllib.parse, urllib.request
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 E = os.environ.get
 DEV, DB = E("INVERTER_DEV", "/dev/inverter"), E("DB_PATH", "/var/lib/solarmon/solar.db")
 HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
 PORT, INTERVAL = int(E("PORT", "8000")), int(E("INTERVAL", "60"))
+BIND_ADDR = E("BIND_ADDR", "127.0.0.1")
 TG_TOKEN, TG_CHAT, MQTT_HOST = E("TG_TOKEN", ""), E("TG_CHAT", ""), E("MQTT_HOST", "")
 BATT_LOW, REPEAT = float(E("BATT_LOW_V", "47")), int(E("ALERT_REPEAT_MIN", "60")) * 60
 log = logging.getLogger("solarmon")
@@ -84,6 +86,7 @@ def parse_cfg(t):
         if i in MAPS:
             try: v = MAPS[i][int(v)]
             except (ValueError, IndexError): pass
+        elif v.isdigit(): v = str(int(v))  # il protocollo invia "020" per 20
         out[label] = v
     return out
 
@@ -98,8 +101,8 @@ def notify(text):
         try:
             urllib.request.urlopen("https://api.telegram.org/bot%s/sendMessage" % TG_TOKEN,
                                    urllib.parse.urlencode({"chat_id": TG_CHAT, "text": text}).encode(), timeout=10)
-        except Exception as e:
-            log.error("telegram: %s", e)
+        except Exception as e:  # l'eccezione di urlopen contiene l'URL con il token
+            log.error("telegram: %s", type(e).__name__)
 
 
 def alert(key, on, text_on, text_off):
@@ -117,7 +120,8 @@ SCHEMA = ("CREATE TABLE IF NOT EXISTS samples(ts INTEGER PRIMARY KEY, pv_w REAL,
 
 
 def connect():
-    c = sqlite3.connect(DB); c.execute("PRAGMA journal_mode=WAL"); c.execute("PRAGMA synchronous=NORMAL"); return c
+    c = sqlite3.connect(DB, timeout=5); c.execute("PRAGMA journal_mode=WAL"); c.execute("PRAGMA synchronous=NORMAL")
+    c.execute("PRAGMA busy_timeout=5000"); return c
 
 
 def faults(ws): return [WS[i][0] for i in WS if ws[i:i + 1] == "1"]
@@ -129,6 +133,10 @@ class Handler(BaseHTTPRequestHandler):
     def out(self, body, ct="application/json"):
         b = body if isinstance(body, bytes) else json.dumps(body).encode()
         self.send_response(200); self.send_header("Content-Type", ct); self.send_header("Content-Length", str(len(b)))
+        self.send_header("X-Content-Type-Options", "nosniff"); self.send_header("Cache-Control", "no-store")
+        if ct.startswith("text/html"):
+            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                             "style-src 'self' 'unsafe-inline'; img-src 'self' data:")
         self.end_headers(); self.wfile.write(b)
 
     def do_GET(self):
@@ -139,15 +147,19 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == "/api/now":
                 s = dict(STATE); s["mode_name"] = MODES.get(s["mode"], "?"); s["faults"] = faults(s["ws"]); self.out(s)
             elif u.path == "/api/series":
-                h = min(int(q.get("h", ["24"])[0]), 24 * 365); b = max(60, h * 3600 // 600)
-                rows = connect().execute("SELECT ts/%d*%d, avg(pv_w), avg(out_w), avg(batt_v), max(pv_v) FROM samples "
-                                         "WHERE ts>? GROUP BY 1 ORDER BY 1" % (b, b), (time.time() - h * 3600,)).fetchall()
+                try: h = min(max(int(q.get("h", ["24"])[0]), 1), 24 * 365)
+                except ValueError: h = 24
+                b = max(60, h * 3600 // 600)
+                with closing(connect()) as con:
+                    rows = con.execute("SELECT ts/%d*%d, avg(pv_w), avg(out_w), avg(batt_v), max(pv_v) FROM samples "
+                                       "WHERE ts>? GROUP BY 1 ORDER BY 1" % (b, b), (time.time() - h * 3600,)).fetchall()
                 cols = list(zip(*rows)) if rows else [[]] * 5
                 self.out(dict(zip(["ts", "pv_w", "out_w", "batt_v", "pv_v"], cols)))
             elif u.path == "/api/daily":
-                rows = connect().execute("SELECT min(ts), sum(pv_w)*%d/3600000.0 FROM samples WHERE ts>? "
-                                         "GROUP BY date(ts,'unixepoch','localtime') ORDER BY 1" % INTERVAL,
-                                         (time.time() - 30 * 86400,)).fetchall()
+                with closing(connect()) as con:
+                    rows = con.execute("SELECT min(ts), sum(pv_w)*%d/3600000.0 FROM samples WHERE ts>? "
+                                       "GROUP BY date(ts,'unixepoch','localtime') ORDER BY 1" % INTERVAL,
+                                       (time.time() - 30 * 86400,)).fetchall()
                 self.out({"ts": [r[0] for r in rows], "kwh": [round(r[1], 2) for r in rows]})
             else:
                 self.send_error(404)
@@ -167,9 +179,11 @@ def mqtt_client():
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    os.makedirs(os.path.dirname(DB), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(DB)), exist_ok=True)
     con = connect(); con.execute(SCHEMA); con.commit()
-    threading.Thread(target=ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever, daemon=True).start()
+    server = ThreadingHTTPServer((BIND_ADDR, PORT), Handler); server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    log.info("dashboard su http://%s:%d", BIND_ADDR, PORT)
     mq, inv, fails, prev, cfg_ts = mqtt_client(), Inverter(), 0, None, 0
     notify("solarmon avviato")
     while True:
