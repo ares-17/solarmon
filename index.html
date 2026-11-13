@@ -1,0 +1,42 @@
+<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Impianto solare</title><style>
+:root{--bg:#f6f6f3;--fg:#1b1d1f;--card:#e9e9e4;--mut:#62666a;--pv:#c27a00;--ld:#2457c5;--bt:#1d8a54;--al:#b3261e}
+@media(prefers-color-scheme:dark){:root{--bg:#131516;--fg:#e8e9ea;--card:#202325;--mut:#9aa0a4;--pv:#f0b429;--ld:#6ea0ff;--bt:#4cc38a;--al:#e5534b}}
+body{margin:0 auto;padding:12px;max-width:900px;background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif}
+h2{font-size:14px;color:var(--mut);margin:18px 0 0;font-weight:500}
+.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:8px}
+.c{background:var(--card);padding:10px;border-radius:8px}.c b{display:block;font-size:22px;font-weight:600}.c small{color:var(--mut)}
+canvas{width:100%;height:150px;background:var(--card);border-radius:8px;display:block;margin-top:6px}
+#al{display:none;background:var(--al);color:#fff;padding:10px;border-radius:8px;margin-bottom:8px}
+button{background:var(--card);color:var(--fg);border:0;padding:8px 14px;border-radius:8px;font:inherit}
+table{width:100%;border-collapse:collapse}td{padding:4px 0;border-bottom:1px solid var(--card)}td+td{text-align:right}
+</style></head><body>
+<div id="al"></div><div class="g" id="cards"></div>
+<h2>Produzione FV e carico (W)</h2><canvas id="c1"></canvas>
+<h2>Tensione batteria (V)</h2><canvas id="c2"></canvas>
+<h2>Energia FV al giorno (kWh)</h2><canvas id="c3"></canvas>
+<p><button onclick="H=24;load()">24 ore</button> <button onclick="H=168;load()">7 giorni</button> <button onclick="H=720;load()">30 giorni</button></p>
+<h2>Impostazioni inverter</h2><table id="cfg"></table>
+<script>
+let H=24;const $=i=>document.getElementById(i),J=async u=>(await fetch(u)).json(),cs=n=>getComputedStyle(document.documentElement).getPropertyValue(n);
+function draw(id,ts,S,C,bars){const c=$(id),d=devicePixelRatio||1,w=c.width=c.clientWidth*d,h=c.height=c.clientHeight*d,x=c.getContext('2d');
+const all=S.flat().filter(v=>v!=null);if(!all.length)return;const lo=bars?0:Math.min(...all);let hi=Math.max(...all);if(hi<=lo)hi=lo+1;
+const L=34*d,X=i=>L+i*(w-L-6*d)/Math.max(ts.length-1,1),Y=v=>h-16*d-(v-lo)*(h-26*d)/(hi-lo);
+x.font=10*d+'px system-ui';x.fillStyle=cs('--mut');
+x.fillText(hi.toFixed(hi<100?1:0),2*d,10*d);x.fillText(lo.toFixed(lo<100&&lo%1?1:0),2*d,h-16*d);
+const f=t=>new Date(t*1000).toLocaleString('it',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+x.fillText(f(ts[0]),L,h-3*d);x.textAlign='right';x.fillText(f(ts[ts.length-1]),w-6*d,h-3*d);x.textAlign='left';
+S.forEach((s,k)=>{x.strokeStyle=x.fillStyle=cs(C[k]);x.lineWidth=1.6*d;
+if(bars){const bw=(w-L)/s.length*.7;s.forEach((v,i)=>x.fillRect(X(i)-bw/2,Y(v),bw,Y(0)-Y(v)))}
+else{x.beginPath();s.forEach((v,i)=>i?x.lineTo(X(i),Y(v)):x.moveTo(X(i),Y(v)));x.stroke()}})}
+async function load(){try{const n=await J('/api/now'),g=n.gs||{},age=Math.round((Date.now()/1000-n.ts)/60),a=[];
+if(!n.ts||age>3)a.push('Nessun dato da '+(n.ts?age+' min':'avvio'));a.push(...n.faults);
+$('al').style.display=a.length?'block':'none';$('al').innerHTML=a.join('<br>');
+const cd=[['FV',g.pv_w,'W',g.pv_v+' V'],['Carico',g.out_w,'W',g.load_pct+' %'],['Batteria',g.batt_v,'V',g.batt_pct+' % · +'+g.chg_a+' / -'+g.dis_a+' A'],
+['Modo',n.mode_name,'',n.faults.length?n.faults.length+' allarmi':'nessun allarme'],['Temperatura',g.temp_c,'°C',''],['Rete',g.grid_v,'V','']];
+$('cards').innerHTML=cd.map(c=>`<div class=c><small>${c[0]}</small><b>${c[1]??'-'} ${c[2]}</b><small>${c[3]}</small></div>`).join('');
+$('cfg').innerHTML=Object.entries(n.cfg).map(([k,v])=>`<tr><td>${k}<td>${v}`).join('');
+const s=await J('/api/series?h='+H),d=await J('/api/daily');
+draw('c1',s.ts,[s.pv_w,s.out_w],['--pv','--ld']);draw('c2',s.ts,[s.batt_v],['--bt']);draw('c3',d.ts,[d.kwh],['--pv'],true)}catch(e){$('al').style.display='block';$('al').textContent='Dashboard non raggiungibile'}}
+load();setInterval(load,30000);
+</script></body></html>

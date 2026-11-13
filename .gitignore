@@ -1,0 +1,35 @@
+# --- Segreti e configurazione locale ---------------------------------------
+# Il file env contiene token Telegram e percorsi macchina: mai nel repo.
+solarmon.env
+.env
+.env.*
+!.env.example
+!solarmon.env.example
+
+# --- Dati e stato runtime --------------------------------------------------
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+backups/
+
+# Dump grezzi dell'inverter (contengono il numero di serie del dispositivo)
+inverter_dump.txt
+inverter_dump*.txt
+qpigs_log.txt
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Editor / OS -----------------------------------------------------------
+.idea/
+.vscode/
+.DS_Store
