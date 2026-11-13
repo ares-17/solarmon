@@ -1,6 +1,6 @@
 {
  "url": "http://127.0.0.1:8123/",
- "at": "2026-11-13T14:53:30.488Z",
+ "at": "2026-11-13T15:18:03.879Z",
  "allow": [
   "font-not-dealt"
  ],
@@ -11,7 +11,7 @@
    "load": "load",
    "screens": 2,
    "filled": [
-    0.69,
+    0.64,
     0.7
    ],
    "motion": {
@@ -28,9 +28,9 @@
      "h": 900
     },
     "page": {
-     "height": 1077,
-     "screens": 1.2,
-     "words": 208,
+     "height": 1129,
+     "screens": 1.3,
+     "words": 227,
      "img": 0,
      "video": 0,
      "canvas": 0,
@@ -92,7 +92,7 @@
       "align": "left",
       "position": "left",
       "widthRatio": 0.03,
-      "top": 702,
+      "top": 754,
       "tag": "b",
       "kind": "heading"
      }
@@ -122,10 +122,11 @@
       14,
       15,
       16,
+      18,
       24,
       30
      ],
-     "sizeCount": 8,
+     "sizeCount": 9,
      "notLoaded": [],
      "body": {
       "font": "system-ui",
@@ -150,8 +151,8 @@
      "microLabelShare": 0,
      "microSamples": [],
      "upperShare": 0,
-     "centerShare": 0.04,
-     "smallText": 11
+     "centerShare": 0.03,
+     "smallText": 12
     },
     "eyebrows": [],
     "numbered": [],
@@ -167,11 +168,11 @@
      "textColors": [
       {
        "color": "#a8b0ab",
-       "share": 0.81
+       "share": 0.82
       },
       {
        "color": "#eef0ee",
-       "share": 0.19
+       "share": 0.18
       }
      ],
      "button": {
@@ -206,8 +207,9 @@
      "scrims": 0,
      "gradientSamples": [],
      "gradientText": 0,
-     "hairlines": 4,
+     "hairlines": 5,
      "hairlineSamples": [
+      "div.node.node-batt 1090px",
       "li 325px",
       "li 325px",
       "li 325px",
@@ -227,7 +229,7 @@
        "count": 3,
        "iconTopped": false,
        "rounded": true,
-       "top": 648
+       "top": 700
       }
      ]
     },
@@ -251,7 +253,7 @@
      "w": 1440,
      "h": 900
     },
-    "pageH": 1077,
+    "pageH": 1129,
     "margins": {
      "left": 154,
      "right": 157
@@ -261,19 +263,19 @@
       "sel": "div.flow",
       "tag": "div",
       "top": 140,
-      "height": 154,
-      "words": 53,
+      "height": 206,
+      "words": 66,
       "media": 0,
-      "middle": 169,
+      "middle": 163,
       "heading": {
-       "text": "783",
+       "text": "601",
        "size": 24,
        "tag": "p"
       },
       "left": 175,
-      "right": 262,
+      "right": 175,
       "textLeft": 175,
-      "textRight": 262,
+      "textRight": 175,
       "fullBleed": false,
       "footer": false,
       "hero": true,
@@ -283,7 +285,7 @@
      {
       "sel": "div.grid",
       "tag": "div",
-      "top": 309,
+      "top": 361,
       "height": 647,
       "words": 77,
       "media": 3,
@@ -418,7 +420,7 @@
     "chartHues": 1,
     "placeholders": [],
     "type": {
-     "under13": 0.44,
+     "under13": 0.43,
      "tiny": 0,
      "tinySamples": [],
      "sizes": [
@@ -428,6 +430,7 @@
       14,
       15,
       16,
+      18,
       24,
       30
      ]
@@ -437,7 +440,7 @@
      "size": 24,
      "top": 68
     },
-    "colourShare": 0.022
+    "colourShare": 0.017
    },
    "consoleErrors": []
   },
@@ -464,9 +467,9 @@
      "h": 1024
     },
     "page": {
-     "height": 1673,
-     "screens": 1.6,
-     "words": 203,
+     "height": 1766,
+     "screens": 1.7,
+     "words": 221,
      "img": 0,
      "video": 0,
      "canvas": 0,
@@ -528,7 +531,7 @@
       "align": "left",
       "position": "left",
       "widthRatio": 0.06,
-      "top": 723,
+      "top": 816,
       "tag": "b",
       "kind": "heading"
      }
@@ -586,8 +589,8 @@
      "microLabelShare": 0,
      "microSamples": [],
      "upperShare": 0,
-     "centerShare": 0.04,
-     "smallText": 10
+     "centerShare": 0.03,
+     "smallText": 11
     },
     "eyebrows": [],
     "numbered": [],
@@ -603,11 +606,11 @@
      "textColors": [
       {
        "color": "#a8b0ab",
-       "share": 0.81
+       "share": 0.82
       },
       {
        "color": "#eef0ee",
-       "share": 0.19
+       "share": 0.18
       }
      ],
      "button": {
@@ -642,8 +645,9 @@
      "scrims": 0,
      "gradientSamples": [],
      "gradientText": 0,
-     "hairlines": 4,
+     "hairlines": 5,
      "hairlineSamples": [
+      "div.node.node-batt 678px",
       "li 678px",
       "li 678px",
       "li 678px",
@@ -680,7 +684,7 @@
      "w": 768,
      "h": 1024
     },
-    "pageH": 1673,
+    "pageH": 1766,
     "margins": {
      "left": 24,
      "right": 27
@@ -690,19 +694,19 @@
       "sel": "div.flow",
       "tag": "div",
       "top": 161,
-      "height": 154,
-      "words": 48,
+      "height": 246,
+      "words": 60,
       "media": 0,
       "middle": 0,
       "heading": {
-       "text": "783",
+       "text": "601",
        "size": 24,
        "tag": "p"
       },
       "left": 45,
-      "right": 127,
+      "right": 152,
       "textLeft": 45,
-      "textRight": 127,
+      "textRight": 152,
       "fullBleed": false,
       "footer": false,
       "hero": true,
@@ -712,7 +716,7 @@
      {
       "sel": "div.grid",
       "tag": "div",
-      "top": 330,
+      "top": 423,
       "height": 1222,
       "words": 77,
       "media": 3,
@@ -802,11 +806,15 @@
     },
     "tiles": 0,
     "panels": {
-     "count": 5,
+     "count": 6,
      "radii": [
       [
        8,
        5
+      ],
+      [
+       0,
+       1
       ]
      ],
      "heavyBorders": 0,
@@ -832,7 +840,7 @@
     "chartHues": 1,
     "placeholders": [],
     "type": {
-     "under13": 0.44,
+     "under13": 0.43,
      "tiny": 0,
      "tinySamples": [],
      "sizes": [
@@ -861,8 +869,8 @@
    "load": "load",
    "screens": 3,
    "filled": [
-    0.74,
-    0.92,
+    0.68,
+    0.79,
     0.86
    ],
    "motion": {
@@ -879,9 +887,9 @@
      "h": 844
     },
     "page": {
-     "height": 1797,
-     "screens": 2.1,
-     "words": 193,
+     "height": 1880,
+     "screens": 2.2,
+     "words": 211,
      "img": 0,
      "video": 0,
      "canvas": 0,
@@ -964,7 +972,7 @@
       "align": "left",
       "position": "left",
       "widthRatio": 0.13,
-      "top": 889,
+      "top": 972,
       "tag": "b",
       "kind": "statement"
      }
@@ -1024,7 +1032,7 @@
      "microSamples": [],
      "upperShare": 0,
      "centerShare": 0.04,
-     "smallText": 9
+     "smallText": 10
     },
     "eyebrows": [],
     "numbered": [],
@@ -1050,11 +1058,11 @@
      "textColors": [
       {
        "color": "#a8b0ab",
-       "share": 0.8
+       "share": 0.81
       },
       {
        "color": "#eef0ee",
-       "share": 0.2
+       "share": 0.19
       }
      ],
      "button": {
@@ -1092,11 +1100,11 @@
      "scrims": 0,
      "gradientSamples": [],
      "gradientText": 0,
-     "hairlines": 6,
+     "hairlines": 7,
      "hairlineSamples": [
       "div.node 316px",
+      "div.node.node-grid 316px",
       "div.node.node-batt 316px",
-      "li 316px",
       "li 316px",
       "li 316px"
      ],
@@ -1114,7 +1122,7 @@
     "heroMedia": [
      {
       "type": "svg",
-      "ratio": 0.18
+      "ratio": 0.17
      }
     ],
     "nav": {
@@ -1131,7 +1139,7 @@
      "w": 390,
      "h": 844
     },
-    "pageH": 1797,
+    "pageH": 1880,
     "margins": {
      "left": 16,
      "right": 17
@@ -1160,8 +1168,8 @@
       "sel": "div.flow",
       "tag": "div",
       "top": 211,
-      "height": 286,
-      "words": 48,
+      "height": 368,
+      "words": 60,
       "media": 0,
       "middle": 0,
       "heading": null,
@@ -1178,7 +1186,7 @@
      {
       "sel": "div.grid",
       "tag": "div",
-      "top": 512,
+      "top": 595,
       "height": 1180,
       "words": 77,
       "media": 3,
@@ -1298,7 +1306,7 @@
     "chartHues": 1,
     "placeholders": [],
     "type": {
-     "under13": 0.41,
+     "under13": 0.4,
      "tiny": 0,
      "tinySamples": [],
      "sizes": [

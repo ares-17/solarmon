@@ -75,6 +75,8 @@ h1{font-size:var(--fs-title);line-height:1.2;font-weight:600;letter-spacing:-.02
 .flow-link{display:none;flex-direction:column;align-items:center;gap:3px;color:var(--muted);font-size:11px;white-space:nowrap}
 .flow-link svg{width:100%;height:10px;color:var(--control)}
 .flow-link.rev svg{transform:scaleX(-1)}
+.flow-link.idle{opacity:.45}
+.node-batt{grid-column:1/-1}
 .flow-sentence{margin-top:12px;font-size:13px;color:var(--muted);max-width:78ch}
 
 .grid{display:grid;gap:var(--gap)}
@@ -117,12 +119,19 @@ figcaption{margin-top:6px;font-size:12px;color:var(--muted)}
 .note{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-top:12px;font-size:13px;color:var(--muted);max-width:80ch}
 .pill{display:inline-block;padding:1px 8px;border:1px solid var(--warn-border);border-radius:999px;background:var(--warn-bg);color:var(--warn-ink);font-size:11px;font-weight:600;white-space:nowrap}
 
+@media (min-width:640px){
+  .node-batt{border-top:1px solid var(--rule);padding-top:11px;margin-top:2px}
+}
 @media (min-width:900px){
   .grid{gap:16px}
   .row3{grid-template-columns:repeat(3,1fr)}
   .row3 .panel{min-height:308px}
   .flow-top{grid-template-columns:1fr minmax(84px,.8fr) 1fr minmax(84px,.8fr) 1fr;gap:16px}
   .flow-link{display:flex}
+  .node-batt{display:flex;align-items:baseline;gap:6px 14px}
+  .node-batt .k{flex:none}
+  .node-batt .v{font-size:18px;margin-top:0}
+  .node-batt .s{margin:0 0 0 auto;text-align:right}
 }
 @media (max-width:899px){
   .row3{grid-template-columns:1fr}
@@ -194,9 +203,14 @@ figcaption{margin-top:6px;font-size:12px;color:var(--muted)}
         <p class="v" id="f-house">– <span class="u">W</span></p>
         <p class="s" id="f-houses">–</p>
       </div>
-      <div class="flow-link" id="link-batt" aria-hidden="true">
+      <div class="flow-link rev" id="link-grid" aria-hidden="true">
         <svg viewBox="0 0 80 10" preserveAspectRatio="none"><path d="M0 5h70M64 1.5 70 5l-6 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <span>in carica</span>
+        <span>non in uso</span>
+      </div>
+      <div class="node node-grid">
+        <p class="k">Rete</p>
+        <p class="v" id="f-grid">–</p>
+        <p class="s" id="f-grids">–</p>
       </div>
       <div class="node node-batt">
         <p class="k">Batteria</p>
@@ -411,11 +425,15 @@ function barChart(svg, ts, values, opts = {}) {
 const battPower = (gs) => (Number(gs.chg_a) > 0.2 ? Number(gs.batt_v) * Number(gs.chg_a)
   : Number(gs.dis_a) > 0.2 ? -Number(gs.batt_v) * Number(gs.dis_a) : 0);
 
-function paintFinding(gs, faults) {
+function paintFinding(gs, faults, mode) {
   const pv = +gs.pv_w || 0, load = +gs.out_w || 0, bp = battPower(gs);
+  const onGrid = (+gs.grid_v || 0) > 90 && mode === 'L';
   let html;
   if (faults.length) {
     html = `<b>${faults.length === 1 ? '1 allarme attivo' : faults.length + ' allarmi attivi'}</b>: ${esc(faults.join('; '))}`;
+  } else if (onGrid) {
+    html = `<b>Casa in bypass</b>: ${fmt(load)} W presi dalla rete. Il FV produce ${fmt(pv)} W` +
+      (bp > 0 ? `, ${fmt(bp)} W in carica` : '') + '.';
   } else if (pv >= load) {
     html = `<b>${fmt(pv - load)} W in eccesso</b> dal FV: ${fmt(load)} W vanno alla casa` +
       (bp > 0 ? `, ${fmt(bp)} W in carica alla batteria` : '') + '.';
@@ -444,24 +462,46 @@ function notice(msg, bad) {
   n.textContent = msg;
 }
 
-function paintFlow(gs) {
+function paintFlow(gs, mode) {
   const pv = +gs.pv_w || 0, load = +gs.out_w || 0;
   $('f-pv').innerHTML = `${fmt(pv)} <span class="u">W</span>`;
   $('f-pvs').textContent = Number.isFinite(+gs.pv_v) ? fmt(gs.pv_v, 1) + ' V in ingresso' : '–';
   $('f-house').innerHTML = `${fmt(load)} <span class="u">W</span>`;
   $('f-houses').textContent = Number.isFinite(+gs.load_pct) ? fmt(gs.load_pct) + '% del nominale' : '–';
-  $('f-batt').innerHTML = `${fmt(gs.batt_pct)} <span class="u">%</span>`;
   const bp = battPower(gs);
-  const amps = (+gs.chg_a > 0.2 ? '+' + fmt(gs.chg_a, 1) : +gs.dis_a > 0.2 ? '−' + fmt(gs.dis_a, 1) : fmt(0, 1)) + ' A';
-  $('f-batts').textContent = `${fmt(gs.batt_v, 2)} V · ${amps} · ${bp > 0 ? '+' : bp < 0 ? '−' : ''}${fmt(Math.abs(bp))} W`;
-  const surplus = pv - load;
-  const link = $('link-batt');
   const charging = +gs.chg_a > 0.2, discharging = +gs.dis_a > 0.2;
-  link.classList.toggle('rev', discharging && !charging);
-  link.lastElementChild.textContent = charging ? 'in carica' : discharging ? 'in scarica' : 'a riposo';
-  $('flow-sentence').textContent = surplus >= 0
-    ? `FV ${fmt(pv)} W copre la casa (${fmt(load)} W): ${fmt(surplus)} W in eccesso, di cui ${fmt(Math.max(0, bp))} W misurati in carica. La differenza è autoconsumo e perdite di conversione.`
-    : `FV ${fmt(pv)} W non copre la casa (${fmt(load)} W): mancano ${fmt(-surplus)} W${bp < 0 ? `, la batteria ne fornisce ${fmt(-bp)} W` : ''}.`;
+  $('f-batt').innerHTML = `${fmt(gs.batt_pct)} <span class="u">%</span>`;
+  $('f-batts').textContent = (charging ? 'in carica' : discharging ? 'in scarica' : 'a riposo') +
+    (bp ? ` · ${bp > 0 ? '+' : '−'}${fmt(Math.abs(bp))} W` : '');
+
+  // Rete: il PI30 non riporta la corrente in ingresso AC. Il prelievo si ricava dal carico
+  // in bypass piu' la ricarica da rete, quindi si mostra con "≈" e si dichiara stimato.
+  const gv = +gs.grid_v || 0, acIn = gv > 90, onGrid = acIn && mode === 'L';
+  const acCharge = acIn && +gs.ac_chg === 1 && charging;
+  const chgW = acCharge ? (+gs.chg_a) * (+gs.batt_v || 0) : 0;
+  const gridW = acIn ? (onGrid ? load : 0) + chgW : 0;
+  const slot = $('f-grid'), note = $('f-grids'), link = $('link-grid');
+  if (!acIn) { slot.innerHTML = '–'; note.textContent = 'assente'; }
+  else if (gridW < 5) { slot.innerHTML = `0 <span class="u">W</span>`; note.textContent = `${fmt(gv)} V · non in uso`; }
+  else { slot.innerHTML = `≈ ${fmt(gridW)} <span class="u">W</span>`; note.textContent = `${fmt(gv)} V · ${onGrid ? 'bypass' : 'ricarica'}`; }
+  link.classList.toggle('idle', !(acIn && (onGrid || acCharge)));
+  link.lastElementChild.textContent = !acIn ? 'rete assente' : onGrid ? 'dalla rete' : acCharge ? 'ricarica da rete' : 'non in uso';
+
+  const surplus = pv - load;
+  const parts = [];
+  if (onGrid) {
+    parts.push(`Casa in bypass: ${fmt(load)} W presi dalla rete${acCharge ? `, più ≈ ${fmt(chgW)} W di ricarica` : ''}.`);
+    parts.push(`Il FV produce ${fmt(pv)} W.`);
+  } else {
+    parts.push(surplus >= 0
+      ? `FV ${fmt(pv)} W copre la casa (${fmt(load)} W): ${fmt(surplus)} W in eccesso, di cui ${fmt(Math.max(0, bp))} W misurati in carica. La differenza è autoconsumo e perdite di conversione.`
+      : `FV ${fmt(pv)} W non copre la casa (${fmt(load)} W): mancano ${fmt(-surplus)} W${bp < 0 ? `, la batteria ne fornisce ${fmt(-bp)} W` : ''}.`);
+    if (acCharge) parts.push(`In più la rete ricarica la batteria: ≈ ${fmt(chgW)} W.`);
+  }
+  if (!acIn) parts.push('Rete assente: si va di FV e batteria.');
+  else if (gridW >= 5) parts.push(`Il prelievo di rete è stimato: l'inverter non misura la corrente in ingresso AC.`);
+  else parts.push(`La rete è presente (${fmt(gv)} V) ma non viene usata.`);
+  $('flow-sentence').textContent = parts.join(' ');
 }
 
 function paintBattery(gs) {
@@ -558,8 +598,8 @@ function render() {
   if (!NOW) return;
   const gs = NOW.gs || {}, cfg = NOW.cfg || {}, faults = NOW.faults || [];
   paintStatus(NOW, faults);
-  paintFinding(gs, faults);
-  paintFlow(gs);
+  paintFinding(gs, faults, NOW.mode);
+  paintFlow(gs, NOW.mode);
   paintBattery(gs);
   paintScope(cfg);
   paintCharts(cfg);
