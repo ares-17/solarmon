@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """solarmon: inverter PI30 (hidraw) -> SQLite + dashboard + dati grezzi JSON + bot Telegram (letture e scritture protette).
 Solo libreria standard (paho-mqtt solo se MQTT_HOST e' impostato)."""
-import collections, hmac, json, logging, os, secrets, select, sqlite3, sys, threading, time, urllib.parse, urllib.request
+import calendar, collections, datetime, hmac, json, logging, math, os, secrets, select, signal, sqlite3, sys, threading, time, urllib.parse, urllib.request
 from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 def load_env():  # legge solarmon.env (o il file in SOLARMON_ENV); l'ambiente reale ha la precedenza
     here = os.path.dirname(os.path.abspath(__file__))
-    for p in (os.environ.get("SOLARMON_ENV"), os.path.join(here, "solarmon.env")):
+    for p in (os.environ.get("SOLARMON_ENV"), os.path.join(here, "solarmon.env"), "/etc/solarmon.env"):
         if p and os.path.isfile(p):
             with open(p) as fh:
                 for line in fh:
@@ -22,12 +22,14 @@ load_env()
 E = os.environ.get
 DEV, DB = E("INVERTER_DEV", "/dev/inverter"), E("DB_PATH", "/var/lib/solarmon/solar.db")
 HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
-PORT, BIND, RAW_TOKEN = int(E("PORT", "8000")), E("BIND_ADDR", "127.0.0.1"), E("RAW_TOKEN", "")
+DEFAULT_BIND = "0.0.0.0" if (os.path.exists("/.dockerenv") or os.environ.get("CONTAINER") or os.environ.get("IN_DOCKER")) else "127.0.0.1"
+PORT, BIND, RAW_TOKEN = int(E("PORT", "8000")), E("BIND_ADDR", DEFAULT_BIND), E("RAW_TOKEN", "")
 INTERVAL, STORE_INTERVAL, RAW_KEEP = max(3, int(E("INTERVAL", "10"))), int(E("STORE_INTERVAL", "60")), int(E("RAW_KEEP", "3600"))
 TG_TOKEN, TG_CHAT, MQTT_HOST = E("TG_TOKEN", ""), E("TG_CHAT", ""), E("MQTT_HOST", "")
 TG_ADMIN = int(E("TG_ADMIN_ID") or TG_CHAT or 0)
 ALLOW_WRITE = E("ALLOW_WRITE", "0") == "1"
 BATT_LOW, REPEAT = float(E("BATT_LOW_V", "47")), int(E("ALERT_REPEAT_MIN", "60")) * 60
+SOLAR_PLACE, SOLAR_LAT, SOLAR_LON = E("SOLAR_PLACE", ""), E("SOLAR_LAT", ""), E("SOLAR_LON", "")
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 log = logging.getLogger("solarmon")
 
@@ -384,6 +386,12 @@ def main():
     for s in SCHEMA: con.execute(s)
     con.commit()
     inv = Inverter()
+    def shutdown(*_):
+        log.info("arresto in corso...")
+        try: inv.close()
+        except Exception: pass
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, shutdown); signal.signal(signal.SIGINT, shutdown)
     server = ThreadingHTTPServer((BIND, PORT), Handler); server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     log.info("dashboard su http://%s:%d", BIND, PORT)

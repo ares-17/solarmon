@@ -1,0 +1,24 @@
+services:
+  solarmon:
+    build: .
+    image: solarmon:latest
+    container_name: solarmon
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    # In alternativa al port-mapping, su Raspberry Pi con Tailscale è possibile usare la rete dell'host:
+    # network_mode: host
+    devices:
+      - /dev/inverter:/dev/inverter
+    volumes:
+      # Persistenza database SQLite
+      - ./data:/var/lib/solarmon
+      # File di configurazione (opzionale se passato tramite env_file o environment)
+      # - ./solarmon.env:/etc/solarmon.env:ro
+    env_file:
+      - path: solarmon.env
+        required: false
+    environment:
+      - PORT=8000
+      # Se si accede all'endpoint di debug /api/raw attraverso una porta esposta su rete non-loopback:
+      # - RAW_TOKEN=tuo_token_segreto

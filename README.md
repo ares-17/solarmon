@@ -41,7 +41,10 @@ solarmon/
 ├── solarmon.py             # processo unico: lettura, storage, HTTP, alert
 ├── index.html              # dashboard statica (nessuna build)
 ├── solarmon.env.example    # modello di configurazione, senza segreti
-├── setup.sh                # installazione idempotente su Raspberry Pi OS
+├── setup.sh                # installazione idempotente nativa su Raspberry Pi OS
+├── Dockerfile              # immagine container minimale (python:3.12-slim)
+├── docker-compose.yml      # orchestrazione per deploy containerizzato
+├── docker-entrypoint.sh    # gestione permessi hardware e user solarmon
 ├── deploy/
 │   ├── solarmon.service    # unit systemd con hardening e Restart=always
 │   ├── solarmon-backup.service / .timer
@@ -53,6 +56,38 @@ solarmon/
     ├── RUNBOOK.md         # installazione, restore, rotazione token
     └── chat-solarmon-2026-11-13.md  # archivio della chat di progetto
 ```
+
+## Deploy con Docker
+
+In alternativa all'installazione nativa systemd con `setup.sh`, è possibile avviare l'applicazione in container:
+
+1. **Configurazione ambiente**:
+   ```bash
+   cp solarmon.env.example solarmon.env
+   chmod 600 solarmon.env
+   # Compila solarmon.env con TG_TOKEN, TG_CHAT, TG_ADMIN_ID ed eventuale RAW_TOKEN
+   ```
+
+2. **Prerequisito hardware (regola udev sull'host)**:
+   Per garantire che il device `/dev/inverter` esista e sia accessibile:
+   ```bash
+   sudo cp deploy/99-inverter.rules /etc/udev/rules.d/
+   sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=hidraw
+   ```
+
+3. **Avvio con Docker Compose**:
+   ```bash
+   docker compose up -d
+   ```
+   * Il container viene eseguito come utente di sistema dedicato `solarmon`.
+   * Il database SQLite persistente risiede nella cartella `./data/` sull'host.
+   * La dashboard risponde su `http://<IP_HOST>:8000`.
+
+4. **Verifica stato e log**:
+   ```bash
+   docker compose logs -f
+   curl -s localhost:8000/api/now | jq
+   ```
 
 ## Sicurezza
 
