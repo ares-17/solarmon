@@ -33,3 +33,9 @@ htmlcov/
 .idea/
 .vscode/
 .DS_Store
+
+# --- Stato degli agenti di sviluppo ----------------------------------------
+.omo/
+
+# --- Log locali ------------------------------------------------------------
+*.log
