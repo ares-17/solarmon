@@ -40,5 +40,3 @@ htmlcov/
 # --- Log locali ------------------------------------------------------------
 *.log
 
-# Copia di partenza dei file v2 scaricati dalla chat, ora integrati
-online-version/

@@ -112,7 +112,7 @@ parametri HTTP limitati, `/api/raw` negato se esposto senza token, `umask 077`.
 punti già chiusi in v1. Integrare invece di sostituire evita regressioni silenziose.
 
 **Conseguenze.** Le correzioni sono coperte da test (token, 403, parametri invalidi,
-`prepare`). `online-version/` resta solo la copia di partenza, fuori dal repo.
+`prepare`). La copia di partenza `online-version/` è stata integrata e poi rimossa.
 
 ## Questioni aperte
 
