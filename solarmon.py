@@ -1,17 +1,34 @@
 #!/usr/bin/env python3
-"""solarmon: inverter PI30 (hidraw) -> SQLite + dashboard web + alert Telegram + MQTT opzionale.
-Solo libreria standard (paho-mqtt solo se MQTT_HOST e' impostato). Solo letture: nessun comando di scrittura."""
-import json, logging, os, select, sqlite3, sys, threading, time, urllib.parse, urllib.request
+"""solarmon: inverter PI30 (hidraw) -> SQLite + dashboard + dati grezzi JSON + bot Telegram (letture e scritture protette).
+Solo libreria standard (paho-mqtt solo se MQTT_HOST e' impostato)."""
+import collections, hmac, json, logging, os, secrets, select, sqlite3, sys, threading, time, urllib.parse, urllib.request
 from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+
+def load_env():  # legge solarmon.env (o il file in SOLARMON_ENV); l'ambiente reale ha la precedenza
+    here = os.path.dirname(os.path.abspath(__file__))
+    for p in (os.environ.get("SOLARMON_ENV"), os.path.join(here, "solarmon.env")):
+        if p and os.path.isfile(p):
+            with open(p) as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1); os.environ.setdefault(k.strip(), v.strip().strip("'\""))
+            return p
+
+
+load_env()
 E = os.environ.get
 DEV, DB = E("INVERTER_DEV", "/dev/inverter"), E("DB_PATH", "/var/lib/solarmon/solar.db")
 HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
-PORT, INTERVAL = int(E("PORT", "8000")), int(E("INTERVAL", "60"))
-BIND_ADDR = E("BIND_ADDR", "127.0.0.1")
+PORT, BIND, RAW_TOKEN = int(E("PORT", "8000")), E("BIND_ADDR", "127.0.0.1"), E("RAW_TOKEN", "")
+INTERVAL, STORE_INTERVAL, RAW_KEEP = max(3, int(E("INTERVAL", "10"))), int(E("STORE_INTERVAL", "60")), int(E("RAW_KEEP", "3600"))
 TG_TOKEN, TG_CHAT, MQTT_HOST = E("TG_TOKEN", ""), E("TG_CHAT", ""), E("MQTT_HOST", "")
+TG_ADMIN = int(E("TG_ADMIN_ID") or TG_CHAT or 0)
+ALLOW_WRITE = E("ALLOW_WRITE", "0") == "1"
 BATT_LOW, REPEAT = float(E("BATT_LOW_V", "47")), int(E("ALERT_REPEAT_MIN", "60")) * 60
+LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 log = logging.getLogger("solarmon")
 
 MODES = {"P": "Accensione", "S": "Standby", "L": "Rete", "B": "Batteria", "F": "FAULT", "H": "Risparmio"}
@@ -25,11 +42,27 @@ WS = {1: ("Inverter fault", 1), 2: ("Bus over", 1), 3: ("Bus under", 1), 4: ("Bu
       23: ("Sensore di corrente guasto", 1), 24: ("Corto circuito batteria", 1), 25: ("Limitazione potenza", 0),
       26: ("Tensione PV alta", 0), 27: ("Sovraccarico MPPT (fault)", 1), 28: ("Sovraccarico MPPT", 0),
       29: ("Batteria troppo scarica per caricare", 0)}
+# QPIRI: posizione -> etichetta (None = campo non mostrato)
+L_OUT, L_CHG, L_MAXC, L_MAXAC, L_BACK, L_RECH, L_CUT = ("Priorita' uscita", "Priorita' carica", "Max carica A", "Max carica AC A",
+                                                       "Ritorno a rete sotto V", "Ritorno a batteria sopra V", "Cutoff batteria V")
 CFG_LABELS = ["AC in V", "AC in A", "Uscita V", "Frequenza Hz", "Uscita A", "VA nominali", "W nominali", "Batteria nominale V",
-              "Ritorno a rete sotto V", "Cutoff batteria V", "Bulk V", "Float V", "Tipo batteria", "Max carica AC A",
-              "Max carica A", "Range ingresso", "Priorita' uscita", "Priorita' carica"]
+              L_BACK, L_CUT, "Bulk V", "Float V", "Tipo batteria", L_MAXAC, L_MAXC, "Range ingresso", L_OUT, L_CHG,
+              None, None, None, None, L_RECH]
 MAPS = {12: ["AGM", "Flooded", "User"], 15: ["Appliance", "UPS"], 16: ["Utility first", "Solar first", "SBU"],
         17: ["Utility first", "Solar first", "Solar+Utility", "Solo solare"]}
+# Impostazioni scrivibili da Telegram: nome -> (comando PI30, valori ammessi, etichetta QPIRI). Per aggiungerne, basta una riga.
+# Volutamente esclusi: tipo batteria e tensioni bulk/float (da fare dal pannello dell'inverter).
+SETTINGS = {
+    "uscita": ("POP", {"utility": "00", "solare": "01", "sbu": "02"}, L_OUT),
+    "carica": ("PCP", {"utility": "00", "solare_prima": "01", "solare_utility": "02", "solo_solare": "03"}, L_CHG),
+    "corrente_carica": ("MCHGC", [10, 20, 30, 40, 50, 60], L_MAXC),
+    "corrente_carica_ac": ("MUCHGC", [2, 10, 20, 30, 40, 50, 60], L_MAXAC),
+    "ritorno_rete_v": ("PBCV", list(range(44, 52)), L_BACK),
+    "ritorno_batteria_v": ("PBDV", list(range(48, 59)), L_RECH),
+    "cutoff_v": ("PSDV", list(range(40, 49)), L_CUT)}
+LEGEND = {"unita": "pv_w/out_w/out_va W, *_v V, chg_a/dis_a A, temp_c C, *_pct %", "mode": MODES,
+          "ws": "32 caratteri QPIWS: tutti 0 = nessun allarme", "pv_w": "potenza FV (limitata dal carico se la batteria e' piena)",
+          "chg_a/dis_a": "corrente in carica/scarica della batteria", "scc_on": "1 = MPPT sta caricando"}
 
 
 def crc16(data):  # CRC-XMODEM con la correzione PI30 (0x28, 0x0D, 0x0A -> +1)
@@ -42,9 +75,13 @@ def crc16(data):  # CRC-XMODEM con la correzione PI30 (0x28, 0x0D, 0x0A -> +1)
     return bytes([fix(crc >> 8), fix(crc & 0xFF)])
 
 
+class Nak(ValueError):
+    pass
+
+
 class Inverter:
     def __init__(self):
-        self.fd = None
+        self.fd, self.lock = None, threading.Lock()  # il lock serializza poll e bot sulla stessa porta
 
     def close(self):
         if self.fd is not None:
@@ -52,24 +89,28 @@ class Inverter:
             except OSError: pass
             self.fd = None
 
-    def query(self, cmd, tries=3):
+    def query(self, cmd, tries=3, retry_nak=True):
         raw = cmd.encode(); pkt = raw + crc16(raw) + b"\r"; last = None
-        for _ in range(tries):
-            try:
-                if self.fd is None: self.fd = os.open(DEV, os.O_RDWR | os.O_NONBLOCK)
-                while select.select([self.fd], [], [], 0)[0]: os.read(self.fd, 256)  # svuota residui
-                for i in range(0, len(pkt), 8): os.write(self.fd, pkt[i:i + 8])
-                buf, end = b"", time.time() + 5
-                while time.time() < end and b"\r" not in buf:
-                    if select.select([self.fd], [], [], 0.5)[0]: buf += os.read(self.fd, 256)
-                if b"\r" not in buf: raise TimeoutError("timeout")
-                buf = buf.split(b"\r")[0].lstrip(b"\x00")
-                if not buf.startswith(b"(") or crc16(buf[:-2]) != buf[-2:]: raise ValueError("risposta non valida")
-                text = buf[1:-2].decode("ascii", "ignore")
-                if text == "NAK": raise ValueError("NAK")
-                return text
-            except (OSError, ValueError, TimeoutError) as e:
-                last = e; self.close(); time.sleep(1)
+        with self.lock:
+            for n in range(tries):
+                try:
+                    if self.fd is None: self.fd = os.open(DEV, os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC)
+                    while select.select([self.fd], [], [], 0)[0]: os.read(self.fd, 256)  # svuota residui
+                    for i in range(0, len(pkt), 8): os.write(self.fd, pkt[i:i + 8])
+                    buf, end = b"", time.time() + 5
+                    while time.time() < end and b"\r" not in buf:
+                        if select.select([self.fd], [], [], 0.5)[0]: buf += os.read(self.fd, 256)
+                    if b"\r" not in buf: raise TimeoutError("timeout")
+                    buf = buf.split(b"\r")[0].lstrip(b"\x00")
+                    if not buf.startswith(b"(") or crc16(buf[:-2]) != buf[-2:]: raise ValueError("risposta non valida")
+                    text = buf[1:-2].decode("ascii", "ignore")
+                    if text == "NAK": raise Nak("NAK (comando rifiutato)")
+                    return text
+                except (OSError, ValueError, TimeoutError) as e:
+                    last = e
+                    if isinstance(e, Nak) and not retry_nak: break
+                    if not isinstance(e, Nak): self.close()
+                    if n < tries - 1: time.sleep(1)
         raise RuntimeError("%s: %s" % (cmd, last))
 
 
@@ -82,11 +123,13 @@ def parse_gs(t):
 def parse_cfg(t):
     f, out = t.split(), {}
     for i, label in enumerate(CFG_LABELS):
+        if label is None: continue
         v = f[i]
         if i in MAPS:
             try: v = MAPS[i][int(v)]
             except (ValueError, IndexError): pass
-        elif v.isdigit(): v = str(int(v))  # il protocollo invia "020" per 20
+        elif v.isdigit():
+            v = str(int(v))
         out[label] = v
     return out
 
@@ -95,14 +138,19 @@ def parse_cfg(t):
 active = {}
 
 
+def tg_api(method, **p):
+    url = "https://api.telegram.org/bot%s/%s" % (TG_TOKEN, method)
+    return json.load(urllib.request.urlopen(url, urllib.parse.urlencode(p).encode(), timeout=int(p.get("timeout", 0)) + 15))
+
+
+def tg_send(text):
+    if TG_TOKEN and TG_CHAT:
+        try: tg_api("sendMessage", chat_id=TG_CHAT, text=text[:4000])
+        except Exception as e: log.error("telegram: %s", type(e).__name__)
+
+
 def notify(text):
-    log.warning("ALERT %s", text)
-    if TG_TOKEN:
-        try:
-            urllib.request.urlopen("https://api.telegram.org/bot%s/sendMessage" % TG_TOKEN,
-                                   urllib.parse.urlencode({"chat_id": TG_CHAT, "text": text}).encode(), timeout=10)
-        except Exception as e:  # l'eccezione di urlopen contiene l'URL con il token
-            log.error("telegram: %s", type(e).__name__)
+    log.warning("ALERT %s", text); tg_send(text)
 
 
 def alert(key, on, text_on, text_off):
@@ -113,10 +161,14 @@ def alert(key, on, text_on, text_off):
         del active[key]; notify(text_off)
 
 
-# ---- storage e stato
-STATE = {"ts": 0, "gs": {}, "mode": "?", "ws": "", "cfg": {}}
-SCHEMA = ("CREATE TABLE IF NOT EXISTS samples(ts INTEGER PRIMARY KEY, pv_w REAL, pv_v REAL, batt_v REAL, out_w REAL,"
-          " load_pct REAL, chg_a REAL, dis_a REAL, temp_c REAL, grid_v REAL, mode TEXT, ws TEXT)")
+# ---- stato, storage, buffer di letture fini
+STATE = {"ts": 0, "gs": {}, "mode": "?", "ws": "", "cfg": {}, "cycle_s": 0}
+RING = collections.deque(maxlen=max(10, RAW_KEEP // INTERVAL + 1))
+RING_LOCK = threading.Lock()
+COLS = ["ts", "pv_w", "pv_v", "batt_v", "out_w", "load_pct", "chg_a", "dis_a", "temp_c", "grid_v", "mode", "ws"]
+SCHEMA = ["CREATE TABLE IF NOT EXISTS samples(ts INTEGER PRIMARY KEY, pv_w REAL, pv_v REAL, batt_v REAL, out_w REAL,"
+          " load_pct REAL, chg_a REAL, dis_a REAL, temp_c REAL, grid_v REAL, mode TEXT, ws TEXT)",
+          "CREATE TABLE IF NOT EXISTS audit(ts INTEGER, who TEXT, cmd TEXT, result TEXT, before TEXT)"]
 
 
 def connect():
@@ -125,6 +177,58 @@ def connect():
 
 
 def faults(ws): return [WS[i][0] for i in WS if ws[i:i + 1] == "1"]
+
+
+def merge(g, ts):
+    m = {"ts": ts}
+    for k, v in g[-1].items():
+        if k == "ts": continue
+        vals = [r[k] for r in g if isinstance(r.get(k), (int, float))]
+        m[k] = round(sum(vals) / len(vals), 2) if vals and isinstance(v, (int, float)) else v
+    m["ws"] = next((r["ws"] for r in g if "1" in r["ws"]), g[-1]["ws"])
+    m["mode"] = "F" if any(r["mode"] == "F" for r in g) else g[-1]["mode"]
+    return m
+
+
+def bucket(rows, step):
+    if step <= 1: return rows
+    out, cur, key = [], [], None
+    for r in rows:
+        k = r["ts"] // step * step
+        if k != key and cur: out.append(merge(cur, key)); cur = []
+        key = k; cur.append(r)
+    if cur: out.append(merge(cur, key))
+    return out
+
+
+def qint(q, key, default, lo, hi):
+    try: v = int(q.get(key, [str(default)])[0])
+    except (TypeError, ValueError): return default
+    return max(lo, min(v, hi))
+
+
+def raw_payload(q):
+    """Dati grezzi per analisi (es. da dare a un'AI): ?seconds=300&step=0&compact=0"""
+    sec, step = qint(q, "seconds", 300, 1, 30 * 86400), qint(q, "step", 0, 0, 86400)
+    now = time.time()
+    with RING_LOCK: ring = list(RING)
+    if ring and now - ring[0]["ts"] + INTERVAL >= sec:
+        src, rows = "ram", [r for r in ring if r["ts"] >= now - sec]
+    else:
+        src = "db"
+        with closing(connect()) as con:
+            rows = [dict(zip(COLS, r)) for r in con.execute(
+                "SELECT %s FROM samples WHERE ts>=? ORDER BY ts" % ",".join(COLS), (now - sec,))]
+    rows = bucket(rows, step)[-5000:]
+    body = {"generated_at": time.strftime("%Y-%m-%d %H:%M:%S %z"), "window_s": sec, "source": src,
+            "interval_s": INTERVAL if src == "ram" else STORE_INTERVAL, "step_s": step, "legend": LEGEND,
+            "inverter_config": STATE["cfg"], "count": len(rows)}
+    if q.get("compact", ["0"])[0] == "1":
+        cols = list(rows[0]) if rows else []
+        body["columns"], body["rows"] = cols, [[r.get(c) for c in cols] for r in rows]
+    else:
+        body["samples"] = rows
+    return body
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -139,20 +243,26 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff"); self.send_header("Cache-Control", "no-store")
         if ct.startswith("text/html"):
             self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; "
-                             "style-src 'self' 'unsafe-inline'; img-src 'self' data:")
+                             "style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; "
+                             "frame-ancestors 'none'; base-uri 'none'")
         self.end_headers(); self.wfile.write(b)
 
-    def do_GET(self):
+    def do_GET(self):  # nessuna scrittura possibile via HTTP: le modifiche passano solo da Telegram
         u = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(u.query)
         try:
             if u.path == "/":
                 self.out(open(HTML, "rb").read(), "text/html; charset=utf-8")
             elif u.path == "/api/now":
                 s = dict(STATE); s["mode_name"] = MODES.get(s["mode"], "?"); s["faults"] = faults(s["ws"]); self.out(s)
+            elif u.path == "/api/raw":
+                tok = q.get("token", [self.headers.get("X-Token", "")])[0]
+                if RAW_TOKEN:
+                    if not hmac.compare_digest(tok, RAW_TOKEN): self.send_error(403); return
+                elif BIND not in LOOPBACK:
+                    self.send_error(403, "RAW_TOKEN non impostato"); return
+                self.out(raw_payload(q))
             elif u.path == "/api/series":
-                try: h = min(max(int(q.get("h", ["24"])[0]), 1), 24 * 365)
-                except ValueError: h = 24
-                b = max(60, h * 3600 // 600)
+                h = qint(q, "h", 24, 1, 24 * 365); b = max(60, h * 3600 // 600)
                 with closing(connect()) as con:
                     rows = con.execute("SELECT ts/%d*%d, avg(pv_w), avg(out_w), avg(batt_v), max(pv_v) FROM samples "
                                        "WHERE ts>? GROUP BY 1 ORDER BY 1" % (b, b), (time.time() - h * 3600,)).fetchall()
@@ -161,13 +271,99 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == "/api/daily":
                 with closing(connect()) as con:
                     rows = con.execute("SELECT min(ts), sum(pv_w)*%d/3600000.0 FROM samples WHERE ts>? "
-                                       "GROUP BY date(ts,'unixepoch','localtime') ORDER BY 1" % INTERVAL,
+                                       "GROUP BY date(ts,'unixepoch','localtime') ORDER BY 1" % STORE_INTERVAL,
                                        (time.time() - 30 * 86400,)).fetchall()
                 self.out({"ts": [r[0] for r in rows], "kwh": [round(r[1], 2) for r in rows]})
             else:
                 self.send_error(404)
         except Exception as e:
             log.error("http: %s", e); self.send_error(500)
+
+
+# ---- bot Telegram: solo TG_ADMIN, solo chat privata, scritture con conferma a codice (60 s)
+PENDING = {}
+
+
+def describe(name):
+    a = SETTINGS[name][1]
+    return "%s: %s" % (name, "|".join(a) if isinstance(a, dict) else "%s..%s" % (a[0], a[-1]))
+
+
+def prepare(name, raw, cfg):
+    if name not in SETTINGS: raise ValueError("parametro sconosciuto")
+    cmd, allowed, label = SETTINGS[name]
+    if isinstance(allowed, dict):
+        if raw not in allowed: raise ValueError("valori ammessi: " + ", ".join(allowed))
+        return cmd + allowed[raw], label
+    try: v = float(raw.replace(",", "."))
+    except ValueError: raise ValueError("serve un numero")
+    if v not in allowed: raise ValueError("valori ammessi: " + ", ".join(str(x) for x in allowed))
+    num = lambda k: float(cfg[k])
+    if name == "cutoff_v" and v >= num(L_BACK): raise ValueError("il cutoff deve restare sotto il ritorno a rete (%s V)" % cfg[L_BACK])
+    if name == "ritorno_rete_v" and not num(L_CUT) < v < num(L_RECH): raise ValueError("deve stare tra cutoff (%s) e ritorno a batteria (%s)" % (cfg[L_CUT], cfg[L_RECH]))
+    if name == "ritorno_batteria_v" and v <= num(L_BACK): raise ValueError("deve stare sopra il ritorno a rete (%s V)" % cfg[L_BACK])
+    return ("%s%03d" % (cmd, v) if cmd in ("MCHGC", "MUCHGC") else "%s%.1f" % (cmd, v)), label
+
+
+def status_text():
+    s, g = STATE, STATE["gs"]
+    if not s["ts"]: return "Nessun dato ancora."
+    t = ("%s, dati di %d s fa\nFV %.0f W (%.1f V)\nCarico %.0f W (%.0f%%)\nBatteria %.1f V, %.0f%% (+%.0f / -%.0f A)\n"
+         "Temperatura %.0f C, rete %.0f V") % (MODES.get(s["mode"], "?"), time.time() - s["ts"], g["pv_w"], g["pv_v"], g["out_w"],
+                                              g["load_pct"], g["batt_v"], g["batt_pct"], g["chg_a"], g["dis_a"], g["temp_c"], g["grid_v"])
+    f = faults(s["ws"]); return t + ("\nALLARMI: " + "; ".join(f) if f else "\nNessun allarme")
+
+
+def handle(m, inv, con):
+    if not m or "text" not in m: return
+    f, ch = m.get("from", {}), m.get("chat", {})
+    if not (f.get("id") == TG_ADMIN and ch.get("id") == int(TG_CHAT) and ch.get("type") == "private" and not f.get("is_bot")):
+        log.warning("bot: messaggio ignorato (from=%s chat=%s)", f.get("id"), ch.get("id")); return  # nessuna risposta agli estranei
+    if time.time() - m.get("date", 0) > 120: return  # scarta messaggi vecchi
+    parts = m["text"].strip().split(); cmd = parts[0].split("@")[0].lower()
+    try:
+        if cmd in ("/start", "/help"):
+            tg_send("/stato situazione\n/oggi energia FV di oggi\n/config impostazioni inverter\n"
+                    "/set <parametro> <valore>, poi /ok <codice>\n\nParametri:\n" + "\n".join(describe(n) for n in SETTINGS)
+                    + ("" if ALLOW_WRITE else "\n\nScrittura DISATTIVATA (ALLOW_WRITE=0)"))
+        elif cmd == "/stato": tg_send(status_text())
+        elif cmd == "/config": tg_send("\n".join("%s: %s" % kv for kv in STATE["cfg"].items()) or "Config non ancora letta.")
+        elif cmd == "/oggi":
+            kwh = con.execute("SELECT coalesce(sum(pv_w),0)*%d/3600000.0 FROM samples WHERE date(ts,'unixepoch','localtime')="
+                              "date('now','localtime')" % STORE_INTERVAL).fetchone()[0]
+            tg_send("Produzione FV oggi: %.2f kWh" % kwh)
+        elif cmd == "/set":
+            if not ALLOW_WRITE: return tg_send("Scrittura disattivata (ALLOW_WRITE=0 nel file env).")
+            if len(parts) != 3: return tg_send("Uso: /set <parametro> <valore>\n" + "\n".join(describe(n) for n in SETTINGS))
+            cfg = parse_cfg(inv.query("QPIRI")); pc, label = prepare(parts[1].lower(), parts[2].lower(), cfg)
+            code = "%04d" % secrets.randbelow(10000)
+            PENDING.clear(); PENDING.update(code=code, cmd=pc, exp=time.time() + 60)
+            tg_send("%s: %s -> %s\nComando: %s\nPer confermare entro 60 s: /ok %s" % (label, cfg[label], parts[2], pc, code))
+        elif cmd == "/ok":
+            p = dict(PENDING); PENDING.clear()
+            if not p or time.time() > p["exp"] or parts[1:] != [p["code"]]: return tg_send("Nessuna modifica in attesa, codice errato o scaduto.")
+            before = parse_cfg(inv.query("QPIRI"))
+            try: res = inv.query(p["cmd"], tries=1, retry_nak=False)
+            except Exception as e: res = "ERRORE: %s" % e
+            time.sleep(1); after = parse_cfg(inv.query("QPIRI")); STATE["cfg"] = after
+            con.execute("INSERT INTO audit VALUES(?,?,?,?,?)", (int(time.time()), str(f.get("id")), p["cmd"], res, json.dumps(before))); con.commit()
+            diff = "\n".join("%s: %s -> %s" % (k, before[k], v) for k, v in after.items() if before.get(k) != v)
+            tg_send("%s -> %s\n%s" % (p["cmd"], res, diff or "Nessuna differenza in QPIRI."))
+    except Exception as e:
+        log.error("bot: %s", e); tg_send("Errore: %s" % e)
+
+
+def bot_loop(inv):
+    con, off = connect(), 0
+    try:
+        r = tg_api("getUpdates", offset=-1, timeout=0)["result"]; off = r[-1]["update_id"] + 1 if r else 0  # salta il backlog
+    except Exception as e: log.error("bot init: %s", type(e).__name__)
+    while True:
+        try:
+            for u in tg_api("getUpdates", offset=off, timeout=30, allowed_updates=json.dumps(["message"]))["result"]:
+                off = u["update_id"] + 1; handle(u.get("message"), inv, con)
+        except Exception as e:
+            log.error("bot: %s", type(e).__name__); time.sleep(5)
 
 
 def mqtt_client():
@@ -184,12 +380,18 @@ def main():
     os.umask(0o077)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     os.makedirs(os.path.dirname(os.path.abspath(DB)), exist_ok=True)
-    con = connect(); con.execute(SCHEMA); con.commit()
-    server = ThreadingHTTPServer((BIND_ADDR, PORT), Handler); server.daemon_threads = True
+    con = connect()
+    for s in SCHEMA: con.execute(s)
+    con.commit()
+    inv = Inverter()
+    server = ThreadingHTTPServer((BIND, PORT), Handler); server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    log.info("dashboard su http://%s:%d", BIND_ADDR, PORT)
-    mq, inv, fails, prev, cfg_ts = mqtt_client(), Inverter(), 0, None, 0
-    notify("solarmon avviato")
+    log.info("dashboard su http://%s:%d", BIND, PORT)
+    if not RAW_TOKEN and BIND not in LOOPBACK:
+        log.warning("/api/raw risponde 403: BIND_ADDR=%s senza RAW_TOKEN", BIND)
+    if TG_TOKEN and TG_CHAT and TG_ADMIN: threading.Thread(target=bot_loop, args=(inv,), daemon=True).start()
+    mq, fails, prev, cfg_ts, store_ts = mqtt_client(), 0, None, 0, 0
+    notify("solarmon avviato (scrittura %s)" % ("ATTIVA" if ALLOW_WRITE else "disattivata"))
     while True:
         t0 = time.time()
         try:
@@ -197,26 +399,29 @@ def main():
             fails = 0; alert("nodata", False, "", "Comunicazione con l'inverter ripristinata")
         except Exception as e:
             fails += 1; log.error("lettura: %s", e)
-            alert("nodata", fails >= 3, "Inverter non risponde da %d letture (%d min)" % (fails, fails * INTERVAL // 60),
+            alert("nodata", fails * INTERVAL >= 60, "Inverter non risponde da %d letture (%d s)" % (fails, fails * INTERVAL),
                   "Comunicazione con l'inverter ripristinata")
             time.sleep(INTERVAL); continue
-        if t0 - cfg_ts > 3600:
-            try: STATE["cfg"] = parse_cfg(inv.query("QPIRI")); cfg_ts = t0
+        if t0 - cfg_ts > 600:  # rilegge la config e segnala modifiche fatte fuori dal bot (es. dal display)
+            try:
+                new, old = parse_cfg(inv.query("QPIRI")), STATE["cfg"]; cfg_ts = t0; STATE["cfg"] = new
+                diff = ["%s: %s -> %s" % (k, old[k], v) for k, v in new.items() if old and old.get(k) != v]
+                if diff: notify("Configurazione inverter cambiata:\n" + "\n".join(diff))
             except Exception as e: log.error("QPIRI: %s", e)
-        STATE.update(ts=int(t0), gs=gs, mode=mode, ws=ws)
-        con.execute("INSERT OR REPLACE INTO samples VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (int(t0), gs["pv_w"], gs["pv_v"], gs["batt_v"], gs["out_w"], gs["load_pct"], gs["chg_a"],
-                     gs["dis_a"], gs["temp_c"], gs["grid_v"], mode, ws)); con.commit()
+        row = dict(ts=int(t0), **gs, mode=mode, ws=ws)
+        with RING_LOCK: RING.append(row)
+        STATE.update(ts=int(t0), gs=gs, mode=mode, ws=ws, cycle_s=round(time.time() - t0, 2))
+        if t0 - store_ts >= STORE_INTERVAL - 0.5:
+            store_ts = t0; con.execute("INSERT OR REPLACE INTO samples VALUES(%s)" % ",".join("?" * len(COLS)), [row[c] for c in COLS]); con.commit()
         for i, (name, severe) in WS.items():
-            alert("ws%d" % i, ws[i:i + 1] == "1", "%s %s (QPIWS=%s)" % ("GUASTO:" if severe else "Avviso:", name, ws),
-                  "Rientrato: " + name)
+            alert("ws%d" % i, ws[i:i + 1] == "1", "%s %s (QPIWS=%s)" % ("GUASTO:" if severe else "Avviso:", name, ws), "Rientrato: " + name)
         alert("modef", mode == "F", "Inverter in modalita' FAULT (QPIWS=%s)" % ws, "Inverter uscito da FAULT")
         low = gs["batt_v"] < BATT_LOW or ("batt" in active and gs["batt_v"] < BATT_LOW + 1)
         alert("batt", low, "Batteria bassa: %.1f V (%d%%)" % (gs["batt_v"], gs["batt_pct"]), "Batteria risalita: %.1f V" % gs["batt_v"])
         if prev and mode != prev: notify("Modalita': %s -> %s" % (MODES.get(prev, prev), MODES.get(mode, mode)))
         prev = mode
         if mq: mq.publish("solar/inverter/state", json.dumps(dict(gs, mode=mode, ws=ws)), retain=True)
-        time.sleep(max(1, INTERVAL - (time.time() - t0)))
+        time.sleep(max(0.5, INTERVAL - (time.time() - t0)))
 
 
 if __name__ == "__main__":

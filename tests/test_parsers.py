@@ -8,6 +8,7 @@ import importlib.util
 import json
 import logging
 import threading
+import urllib.error
 import urllib.request
 from contextlib import closing
 from http.server import ThreadingHTTPServer
@@ -135,6 +136,19 @@ def test_notify_does_not_log_the_bot_token(solarmon, monkeypatch, caplog):
 
 
 @pytest.fixture
+def db(solarmon, tmp_path):
+    solarmon.DB = str(tmp_path / "solar.db")
+    con = solarmon.connect()
+    for statement in solarmon.SCHEMA:
+        con.execute(statement)
+    con.commit()
+    con.close()
+    with solarmon.RING_LOCK:
+        solarmon.RING.clear()
+    return solarmon
+
+
+@pytest.fixture
 def server(solarmon):
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), solarmon.Handler)
     httpd.daemon_threads = True
@@ -158,3 +172,48 @@ def test_dashboard_html_has_content_security_policy(server):
     with closing(urllib.request.urlopen(server + "/", timeout=5)) as response:
         assert response.status == 200
         assert "default-src 'self'" in response.headers["Content-Security-Policy"]
+
+
+def test_series_with_invalid_h_does_not_fail(db, server):
+    with closing(urllib.request.urlopen(server + "/api/series?h=abc", timeout=5)) as response:
+        assert response.status == 200
+        assert set(json.load(response)) == {"ts", "pv_w", "out_w", "batt_v", "pv_v"}
+
+
+def test_raw_denied_without_token_when_token_is_set(db, server, monkeypatch):
+    monkeypatch.setattr(db, "RAW_TOKEN", "s3cret")
+    with pytest.raises(urllib.error.HTTPError) as error:
+        urllib.request.urlopen(server + "/api/raw", timeout=5)
+    assert error.value.code == 403
+
+
+def test_raw_returns_data_with_token(db, server, monkeypatch):
+    monkeypatch.setattr(db, "RAW_TOKEN", "s3cret")
+    with closing(urllib.request.urlopen(server + "/api/raw?token=s3cret", timeout=5)) as response:
+        body = json.load(response)
+    assert body["count"] == 0
+    assert body["source"] == "db"
+
+
+def test_raw_denied_when_exposed_without_token(db, server, monkeypatch):
+    monkeypatch.setattr(db, "RAW_TOKEN", "")
+    monkeypatch.setattr(db, "BIND", "0.0.0.0")
+    with pytest.raises(urllib.error.HTTPError) as error:
+        urllib.request.urlopen(server + "/api/raw", timeout=5)
+    assert error.value.code == 403
+
+
+CFG = {"Ritorno a rete sotto V": "45.0", "Cutoff batteria V": "42.0", "Ritorno a batteria sopra V": "48.0"}
+
+
+def test_prepare_accepts_consistent_cutoff(solarmon):
+    assert solarmon.prepare("cutoff_v", "44", CFG) == ("PSDV44.0", "Cutoff batteria V")
+
+
+def test_prepare_rejects_cutoff_above_back_to_grid(solarmon):
+    with pytest.raises(ValueError):
+        solarmon.prepare("cutoff_v", "46", CFG)
+
+
+def test_prepare_maps_output_priority(solarmon):
+    assert solarmon.prepare("uscita", "sbu", CFG) == ("POP02", "Priorita' uscita")

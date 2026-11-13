@@ -1,8 +1,9 @@
 # Security review — solarmon
 
 Revisione del codice v1 (`solarmon.py`, `index.html`) e del setup descritto nella chat.
-Ogni voce ha stato: **DA FARE** (non ancora corretto), **PARZIALE** (corretto in v1, resta
-la parte v2), **FATTO** (corretto nel repo) o **ACCETTATO** (rischio residuo motivato).
+Il **13/11/2026** è stata integrata la v2: i fix S1–S10 sono stati riapplicati e coperti dai
+test. Ogni voce ha stato: **DA FARE** (non ancora corretto), **PARZIALE**, **FATTO** (corretto
+nel repo) o **ACCETTATO** (rischio residuo motivato).
 
 ## Riepilogo
 
@@ -12,12 +13,12 @@ la parte v2), **FATTO** (corretto nel repo) o **ACCETTATO** (rischio residuo mot
 | S2 | Alta | HTTP in ascolto su `0.0.0.0` senza autenticazione | FATTO |
 | S3 | Alta | Servizio systemd come root (setup della chat) | FATTO |
 | S4 | Media | `/dev/inverter` con `MODE=0666` (scrivibile da chiunque) | FATTO |
-| S5 | Media | Nessun token su `/api/raw`: dati operativi esposti | DA FARE (v2) |
+| S5 | Media | Nessun token su `/api/raw`: dati operativi esposti | FATTO |
 | S6 | Media | Mosquitto senza auth e in ascolto su tutte le interfacce | FATTO (non installato) |
 | S7 | Bassa | Connessione SQLite aperta a ogni richiesta HTTP e mai chiusa | FATTO |
 | S8 | Bassa | `os.makedirs(os.path.dirname(DB))` esplode se `DB_PATH` è relativo senza directory | FATTO |
 | S9 | Bassa | Nessun header di sicurezza (CSP, nosniff) sulle risposte | FATTO |
-| S10 | Bassa | Parametri HTTP non tutti limitati (finestra `/api/raw` in v2) | PARZIALE (v1) |
+| S10 | Bassa | Parametri HTTP non tutti limitati (finestra `/api/raw` in v2) | FATTO |
 | S11 | Bassa | Nessun rate limit sulle rotte HTTP | ACCETTATO (loopback/Tailscale) |
 | S12 | Informativa | Il token Telegram viaggia nell'URL (limite dell'API Bot) | ACCETTATO + mitigazioni |
 
@@ -74,8 +75,8 @@ processo locale. I comandi di scrittura possono cambiare tensioni di carica.
 La rotta serve a incollare i dati a un'AI: contiene storico, configurazione e stato.
 In v2 è previsto `RAW_TOKEN`, ma se non impostato resta aperta.
 
-**Fix:** token obbligatorio quando la rotta è esposta oltre il loopback; confronto a tempo
-costante (`secrets.compare_digest`), token in query o header, mai nei log.
+**Fix applicato:** token obbligatorio con `hmac.compare_digest`; se il bind non è loopback e
+il token è vuoto la rotta risponde 403 (non espone nulla). Il token non viene mai loggato.
 
 ### S6 — MQTT aperto
 
@@ -114,7 +115,9 @@ sono numerici o presi da mappe fisse, quindi il rischio XSS è basso, ma l'heade
 `/api/series` limita `h` a 365 giorni. La nuova `/api/raw` deve limitare `seconds`, `step`
 e il numero di campioni restituiti, altrimenti una richiesta può allocare molta memoria.
 
-**Fix:** tetti espliciti (`seconds <= RAW_KEEP` o 7 giorni, `step >= 1`, massimo N righe).
+**Fix applicato:** `seconds` limitato a 30 giorni, `step` a 86400, `h` a 365 giorni; il
+risultato è comunque tagliato a 5000 righe e un valore non numerico ricade sul default
+(200, non 500).
 
 ### S12 — Token nell'URL Telegram
 
@@ -128,7 +131,7 @@ Telegram perché il bot è controllabile da chi possiede l'account.
 - [x] S2 bind su `127.0.0.1` e accesso via Tailscale
 - [x] S3 utente dedicato + unit hardened
 - [x] S4 udev `0660` con gruppo `inverter`
-- [ ] S5 `RAW_TOKEN` impostato (se `/api/raw` è raggiungibile)
+- [x] S5 `/api/raw` protetto: token oppure 403 se esposto senza token
 - [x] S6 Mosquitto non installato o con auth e bind locale
 - [x] S7/S8 fix a SQLite
 - [x] S9 header di sicurezza

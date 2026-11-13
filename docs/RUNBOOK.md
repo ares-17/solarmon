@@ -26,6 +26,15 @@ curl -s http://127.0.0.1:8000/api/now     # JSON con ts recente
 Se `/dev/inverter` manca: cavo USB, `lsusb` (deve comparire `0665:5161`), poi
 `sudo udevadm control --reload && sudo udevadm trigger`.
 
+Da telefono, senza aprire porte sul router:
+
+```bash
+tailscale serve --bg 8000      # HTTPS nel tailnet -> 127.0.0.1:8000
+```
+
+In alternativa `BIND_ADDR=<IP Tailscale>` nel file env, ma `tailscale serve` evita di far
+ascoltare l'app su un'interfaccia esterna.
+
 ## 2. Operazioni quotidiane
 
 | Cosa | Comando |
@@ -36,6 +45,9 @@ Se `/dev/inverter` manca: cavo USB, `lsusb` (deve comparire `0665:5161`), poi
 | Riavvio | `sudo systemctl restart solarmon` |
 | Stato API | `curl -s localhost:8000/api/now | jq` |
 | Dati grezzi per AI | `curl -s "localhost:8000/api/raw?seconds=3600&step=30&compact=1"` |
+
+Con `RAW_TOKEN` impostato aggiungere `&token=$RAW_TOKEN` oppure l'header `X-Token`.
+Con `BIND_ADDR` non loopback e `RAW_TOKEN` vuoto la rotta risponde 403 per progetto.
 
 Il servizio ha `Restart=always`: un crash viene recuperato in circa 5 secondi. Un riavvio
 continuo (visibile in `systemctl status` come "start-limit-hit") indica un problema

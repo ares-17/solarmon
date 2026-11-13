@@ -29,7 +29,8 @@ abbondanti per lo storico; le letture fini servono solo per diagnosi e per `/api
 ## D3 — HTTP in sola lettura, bind su loopback
 
 **Scelta.** Il server espone solo rotte GET. `BIND_ADDR` default `127.0.0.1`.
-Da remoto si passa da Tailscale. `/api/raw` protetto da `RAW_TOKEN` quando impostato.
+Da remoto si passa da Tailscale. `/api/raw` protetto da `RAW_TOKEN` quando impostato; se il
+bind non è loopback e il token è vuoto, la rotta risponde 403.
 
 **Motivo.** La dashboard non deve essere raggiungibile in LAN da chiunque. Nessuna rotta
 HTTP scrive sull'inverter: le modifiche passano solo dal bot Telegram (connessione in
@@ -78,8 +79,8 @@ esporre l'inverter a utenti non previsti.
 ## D7 — Segreti solo fuori dal repo
 
 **Scelta.** `.gitignore` esclude `.env`/`solarmon.env`, database, backup, dump dell'inverter.
-Il modello `solarmon.env.example` contiene solo placeholder. Permessi `0600` sul file env
-reale, `0640` sul database.
+Il modello `solarmon.env.example` contiene solo placeholder. Permessi `0600` sul file env e sul
+database, `0640` sui backup (leggibili dal gruppo `solarmon`).
 
 **Motivo.** Il token del bot e il numero di serie dell'inverter non devono finire in git
 né in una condivisione.
@@ -95,11 +96,23 @@ sulla Pi segnala se l'host sparisce.
 **Motivo.** L'app non può avvisare della propria morte né di una SD corrotta o di un
 blackout. Serve un osservatore esterno.
 
-## D9 — Bug noto da correggere subito
+## D9 — Token nei log (corretto)
 
-`notify()` in v1 fa `log.error("telegram: %s", e)`: se `urlopen` fallisce, l'eccezione
-contiene l'URL completo e quindi **il token del bot finisce nei journal**. Va sanificata
-prima di andare in produzione.
+In v1 `notify()` fa `log.error("telegram: %s", e)`: se `urlopen` fallisce, l'eccezione
+contiene l'URL completo e quindi **il token del bot finisce nei journal**. Nella v2 integrata
+il log riporta solo `type(e).__name__`, e un test verifica che il token non compaia.
+
+## D10 — Integrazione della v2 e riapplicazione dell'hardening
+
+**Scelta.** La v2 scaricata dalla chat è stata integrata mantenendo le correzioni S1–S10:
+bind loopback di default, log senza token, SQLite chiuso e con timeout, header di sicurezza,
+parametri HTTP limitati, `/api/raw` negato se esposto senza token, `umask 077`.
+
+**Motivo.** La v2 aggiunge funzioni (file env, `/api/raw`, bot con scritture) ma riapriva i
+punti già chiusi in v1. Integrare invece di sostituire evita regressioni silenziose.
+
+**Conseguenze.** Le correzioni sono coperte da test (token, 403, parametri invalidi,
+`prepare`). `online-version/` resta solo la copia di partenza, fuori dal repo.
 
 ## Questioni aperte
 

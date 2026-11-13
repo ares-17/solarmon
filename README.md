@@ -27,14 +27,12 @@ L'app è l'unico processo che parla con l'inverter: nessun altro programma deve 
 
 ## Stato del repository
 
-- `solarmon.py` + `index.html`: versione **v1** funzionante (letta e collaudata sul campo),
-  già irrobustita sui punti S1–S10 di `docs/SECURITY.md`.
+- `solarmon.py`: **v2** (letta sul campo, integrata il 13/11) con file env, ring buffer,
+  `/api/raw`, bot Telegram con whitelist e audit. L'hardening S1–S10 di `docs/SECURITY.md`
+  è stato riapplicato sopra la v2 ed è coperto dai test.
 - `setup.sh` e `deploy/`: unit systemd con hardening e auto-restart, regola udev `0660`,
   backup giornaliero con retention. Il servizio parte anche senza token Telegram.
-- La **v2** (lettura del file env, ring buffer, `/api/raw`, bot Telegram con whitelist e
-  audit) è descritta in `docs/chat-solarmon-2026-11-13.md` e va importata prima della
-  Milestone 1. Finché manca, le variabili arrivano comunque a processo via
-  `EnvironmentFile` di systemd.
+- `index.html`: dashboard statica, compatibile con le risposte v2.
 
 ## Struttura
 
@@ -62,7 +60,7 @@ Principi applicati (dettaglio in `docs/DECISIONS.md`):
 
 - **Nessuna scrittura via HTTP**: il server espone solo rotte GET di lettura.
 - **Bind su loopback** per default (`BIND_ADDR=127.0.0.1`); l'accesso da telefono passa da Tailscale.
-- **Token** su `/api/raw`, endpoint pensato per incollare i dati a un'AI.
+- **Token** su `/api/raw`: con `BIND_ADDR` non loopback e `RAW_TOKEN` vuoto la rotta risponde 403.
 - **Telegram**: risponde solo all'utente `TG_ADMIN_ID` in chat privata; scritture disattivate
   salvo `ALLOW_WRITE=1`; whitelist di parametri, doppia conferma con codice monouso, audit su SQLite.
 - **Segreti fuori dal repo**: `.env`, database, backup e dump sono in `.gitignore`.
