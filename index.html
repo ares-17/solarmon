@@ -1,42 +1,629 @@
-<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Impianto solare</title><style>
-:root{--bg:#f6f6f3;--fg:#1b1d1f;--card:#e9e9e4;--mut:#62666a;--pv:#c27a00;--ld:#2457c5;--bt:#1d8a54;--al:#b3261e}
-@media(prefers-color-scheme:dark){:root{--bg:#131516;--fg:#e8e9ea;--card:#202325;--mut:#9aa0a4;--pv:#f0b429;--ld:#6ea0ff;--bt:#4cc38a;--al:#e5534b}}
-body{margin:0 auto;padding:12px;max-width:900px;background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif}
-h2{font-size:14px;color:var(--mut);margin:18px 0 0;font-weight:500}
-.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:8px}
-.c{background:var(--card);padding:10px;border-radius:8px}.c b{display:block;font-size:22px;font-weight:600}.c small{color:var(--mut)}
-canvas{width:100%;height:150px;background:var(--card);border-radius:8px;display:block;margin-top:6px}
-#al{display:none;background:var(--al);color:#fff;padding:10px;border-radius:8px;margin-bottom:8px}
-button{background:var(--card);color:var(--fg);border:0;padding:8px 14px;border-radius:8px;font:inherit}
-table{width:100%;border-collapse:collapse}td{padding:4px 0;border-bottom:1px solid var(--card)}td+td{text-align:right}
+<!doctype html><html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>solarmon · impianto</title>
+<style>
+:root{
+  --ground:#f4f5f3; --surface:#ffffff; --raised:#f8f9f7; --active:#eceeea;
+  --border:#e2e4df; --rule:#eff0ec; --control:#cdd1cb;
+  --text:#101211; --muted:#58605c;
+  --accent:#a85f00; --positive:#247b50; --negative:#b3261e;
+  --warn-bg:#fffbeb; --warn-ink:#92400e; --warn-border:#fde68a;
+  --neg-bg:#ffedea; --neg-ink:#831c1e; --neg-border:#f6c9c4;
+  --grid:#e7e9e5;
+  --r-card:8px; --r-ctl:6px; --r-chip:4px;
+  --gap:16px; --pad:24px;
+  --fs-title:24px; --fs-kpi:30px; --fs-sec:16px; --fs-body:14px; --fs-small:12px;
+  --font:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --ground:#121413; --surface:#1a1d1b; --raised:#202422; --active:#262a28;
+    --border:#2a2e2b; --rule:#232725; --control:#3d423f;
+    --text:#eef0ee; --muted:#a8b0ab;
+    --accent:#e8a33d; --positive:#4cc38a; --negative:#e5534b;
+    --warn-bg:#2a2416; --warn-ink:#d9a441; --warn-border:#4a3d1c;
+    --neg-bg:#2c1a20; --neg-ink:#f08a83; --neg-border:#5a2a31;
+    --grid:#262a28;
+  }
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--ground);color:var(--text);font:var(--fs-body)/1.5 var(--font);
+  font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+h1,h2,p,ul,figure{margin:0}
+button{font:inherit;color:inherit;cursor:pointer}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+.bar{display:flex;align-items:center;gap:11px;height:48px;max-width:1180px;margin:0 auto;padding:0 var(--pad)}
+.brand{display:flex;align-items:center;gap:8px;text-decoration:none;font-size:15px;font-weight:600;letter-spacing:-.01em}
+.brand svg{width:18px;height:18px;flex:none;color:var(--accent)}
+.scope{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.live{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);white-space:nowrap}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--positive);flex:none}
+.dot.warn{background:var(--warn-ink)}
+.dot.bad{background:var(--negative)}
+.refresh{height:32px;padding:0 12px;border:1px solid var(--control);border-radius:var(--r-ctl);background:var(--surface);font-size:12px}
+.refresh:hover{border-color:var(--muted)}
+.refresh:disabled{color:var(--muted)}
+
+.wrap{max-width:1180px;margin:0 auto;padding:20px var(--pad) 56px}
+.title-row{display:flex;align-items:flex-end;gap:16px 24px;flex-wrap:wrap;margin-bottom:18px}
+.title-main{min-width:0;flex:1 1 420px}
+h1{font-size:var(--fs-title);line-height:1.2;font-weight:600;letter-spacing:-.02em}
+.finding{margin-top:4px;color:var(--muted);font-size:14px;max-width:74ch}
+.finding b{color:var(--text);font-weight:600}
+.back{display:inline-block;font-size:13px;color:var(--muted);text-decoration:none;margin-bottom:4px}
+.back:hover{color:var(--text)}
+
+.seg{display:flex;gap:2px;padding:2px;background:var(--raised);border:1px solid var(--border);border-radius:var(--r-ctl);flex:none}
+.seg button{height:26px;padding:0 11px;border:1px solid transparent;border-radius:var(--r-chip);background:transparent;color:var(--muted);font-size:12px}
+.seg button[aria-pressed="true"]{background:var(--surface);border-color:var(--border);color:var(--text);font-weight:600}
+
+.notice{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:16px;padding:9px 14px;border:1px solid var(--warn-border);border-radius:var(--r-card);background:var(--warn-bg);color:var(--warn-ink);font-size:13px}
+.notice.bad{border-color:var(--neg-border);background:var(--neg-bg);color:var(--neg-ink)}
+
+.flow{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:16px 20px 18px;margin-bottom:var(--gap)}
+.flow-top{display:grid;grid-template-columns:repeat(3,1fr);align-items:center;gap:12px}
+.node .k{font-size:12px;color:var(--muted)}
+.node .v{margin-top:1px;font-size:24px;font-weight:600;line-height:1.15;letter-spacing:-.02em}
+.node .v .u{font-size:12px;font-weight:400;letter-spacing:0;color:var(--muted)}
+.node .s{margin-top:2px;font-size:12px;color:var(--muted)}
+.flow-link{display:none;flex-direction:column;align-items:center;gap:3px;color:var(--muted);font-size:11px;white-space:nowrap}
+.flow-link svg{width:100%;height:10px;color:var(--control)}
+.flow-link.rev svg{transform:scaleX(-1)}
+.flow-sentence{margin-top:12px;font-size:13px;color:var(--muted);max-width:78ch}
+
+.grid{display:grid;gap:var(--gap)}
+.row3{display:grid;gap:var(--gap)}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:15px 20px 16px;min-width:0}
+.p-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;min-height:26px}
+.p-head h2{font-size:var(--fs-sec);font-weight:600;letter-spacing:-.01em}
+.legend{margin-left:auto;display:flex;gap:12px;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:0}
+.meta{margin-left:auto;font-size:12px;color:var(--muted)}
+figure svg{display:block;width:100%;height:auto;overflow:visible}
+svg text{font-family:var(--font);font-size:11px}
+figcaption{margin-top:6px;font-size:12px;color:var(--muted)}
+
+.batt{display:flex;flex-direction:column}
+.state{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:12px;color:var(--muted)}
+.state i{width:6px;height:6px;border-radius:50%;background:var(--muted)}
+.state.on i{background:var(--positive)}
+.soc{display:flex;align-items:baseline;gap:5px;margin-top:2px}
+.soc b{font-size:var(--fs-kpi);font-weight:600;line-height:1;letter-spacing:-.02em}
+.soc span{font-size:13px;color:var(--muted)}
+.track{height:6px;border-radius:3px;background:var(--raised);margin-top:10px;overflow:hidden}
+.track i{display:block;height:100%;border-radius:3px;background:var(--text)}
+.rows{list-style:none;padding:0;margin:10px 0 0}
+.rows li{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-top:1px solid var(--rule);font-size:13px}
+.rows .k{color:var(--muted)}
+.rows .v{font-weight:500;white-space:nowrap}
+.fine{margin-top:auto;padding-top:10px;font-size:11px;color:var(--muted)}
+
+.settings-link{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:var(--gap);padding:13px 20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);font-size:14px;font-weight:500;text-decoration:none}
+.settings-link:hover{border-color:var(--control)}
+.settings-link span{font-size:12px;font-weight:400;color:var(--muted)}
+.grp{margin-top:28px}
+.grp>h2{font-size:14px;font-weight:600}
+.grp .hint{margin-top:2px;font-size:12px;color:var(--muted)}
+.kv{margin-top:10px;border-top:1px solid var(--border)}
+.kv div{display:flex;justify-content:space-between;gap:16px;padding:9px 0;border-bottom:1px solid var(--rule);font-size:14px}
+.kv .k{color:var(--muted)}
+.kv .v{font-weight:500;white-space:nowrap}
+.note{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-top:12px;font-size:13px;color:var(--muted);max-width:80ch}
+.pill{display:inline-block;padding:1px 8px;border:1px solid var(--warn-border);border-radius:999px;background:var(--warn-bg);color:var(--warn-ink);font-size:11px;font-weight:600;white-space:nowrap}
+
+@media (min-width:900px){
+  .grid{gap:16px}
+  .row3{grid-template-columns:repeat(3,1fr)}
+  .row3 .panel{min-height:308px}
+  .flow-top{grid-template-columns:1fr minmax(84px,.8fr) 1fr minmax(84px,.8fr) 1fr;gap:16px}
+  .flow-link{display:flex}
+}
+@media (max-width:899px){
+  .row3{grid-template-columns:1fr}
+}
+@media (max-width:639px){
+  :root{--pad:16px}
+  .bar{gap:8px}
+  .scope{display:none}
+  .wrap{padding-top:14px;padding-bottom:40px}
+  .title-row{align-items:stretch}
+  .seg{width:100%}
+  .seg button{flex:1;height:34px;font-size:13px}
+  .flow-top{grid-template-columns:1fr;gap:0}
+  .node{display:grid;grid-template-columns:1fr auto;align-items:baseline;gap:0 12px;padding:9px 0;border-top:1px solid var(--rule)}
+  .node:first-child{border-top:0;padding-top:0}
+  .node .k{grid-column:1}
+  .node .v{grid-column:2;justify-self:end;font-size:20px}
+  .node .s{grid-column:1/-1;margin-top:1px}
+  .p-head{gap:8px}
+  .legend{margin-left:0;order:3;flex-basis:100%}
+  .meta{margin-left:auto}
+  .kv div{font-size:13px}
+}
+@media (prefers-reduced-motion:no-preference){
+  .seg button,.refresh,.settings-link,.brand,.back{transition:background-color .12s,border-color .12s,color .12s}
+}
 </style></head><body>
-<div id="al"></div><div class="g" id="cards"></div>
-<h2>Produzione FV e carico (W)</h2><canvas id="c1"></canvas>
-<h2>Tensione batteria (V)</h2><canvas id="c2"></canvas>
-<h2>Energia FV al giorno (kWh)</h2><canvas id="c3"></canvas>
-<p><button onclick="H=24;load()">24 ore</button> <button onclick="H=168;load()">7 giorni</button> <button onclick="H=720;load()">30 giorni</button></p>
-<h2>Impostazioni inverter</h2><table id="cfg"></table>
+
+<header class="bar">
+  <a class="brand" href="#"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+    <circle cx="12" cy="12" r="4.1"/><path d="M12 2.8v2.5M12 18.7v2.5M2.8 12h2.5M18.7 12h2.5M5.5 5.5l1.8 1.8M16.7 16.7l1.8 1.8M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8"/></svg>
+    solarmon</a>
+  <span class="scope" id="scope">Impianto off-grid</span>
+  <div class="live">
+    <span class="dot" id="dot" aria-hidden="true"></span>
+    <span id="stamp">in attesa</span>
+    <button class="refresh" id="refresh" type="button">Aggiorna</button>
+  </div>
+</header>
+
+<main class="wrap" id="overview">
+  <div class="notice" id="notice" role="alert" hidden></div>
+
+  <div class="title-row">
+    <div class="title-main">
+      <h1>Impianto</h1>
+      <p class="finding" id="finding">Lettura in corso…</p>
+    </div>
+    <div class="seg" role="group" aria-label="Periodo dei grafici">
+      <button type="button" data-h="24" aria-pressed="true">24 ore</button>
+      <button type="button" data-h="168" aria-pressed="false">7 giorni</button>
+      <button type="button" data-h="720" aria-pressed="false">30 giorni</button>
+    </div>
+  </div>
+
+  <div class="flow" role="group" aria-label="Flusso di potenza adesso">
+    <div class="flow-top">
+      <div class="node">
+        <p class="k">FV</p>
+        <p class="v" id="f-pv">– <span class="u">W</span></p>
+        <p class="s" id="f-pvs">–</p>
+      </div>
+      <div class="flow-link" aria-hidden="true">
+        <svg viewBox="0 0 80 10" preserveAspectRatio="none"><path d="M0 5h70M64 1.5 70 5l-6 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>verso il carico</span>
+      </div>
+      <div class="node">
+        <p class="k">Casa</p>
+        <p class="v" id="f-house">– <span class="u">W</span></p>
+        <p class="s" id="f-houses">–</p>
+      </div>
+      <div class="flow-link" id="link-batt" aria-hidden="true">
+        <svg viewBox="0 0 80 10" preserveAspectRatio="none"><path d="M0 5h70M64 1.5 70 5l-6 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>in carica</span>
+      </div>
+      <div class="node node-batt">
+        <p class="k">Batteria</p>
+        <p class="v" id="f-batt">– <span class="u">%</span></p>
+        <p class="s" id="f-batts">–</p>
+      </div>
+    </div>
+    <p class="flow-sentence" id="flow-sentence">–</p>
+  </div>
+
+  <div class="grid">
+    <section class="panel" aria-labelledby="h-prod">
+      <div class="p-head">
+        <h2 id="h-prod">Produzione e carico</h2>
+        <div class="legend">
+          <span><i style="background:var(--accent)"></i>FV</span>
+          <span><i style="background:var(--text)"></i>Carico</span>
+        </div>
+      </div>
+      <figure>
+        <svg class="chart" id="c-prod" role="img" aria-labelledby="cap-prod"></svg>
+        <figcaption id="cap-prod">Produzione FV e potenza del carico.</figcaption>
+      </figure>
+    </section>
+
+    <div class="row3">
+      <section class="panel batt" aria-labelledby="h-batt">
+        <div class="p-head"><h2 id="h-batt">Batteria</h2><span class="state" id="b-state"><i></i><span>–</span></span></div>
+        <p class="soc"><b id="b-soc">–</b><span>% carica</span></p>
+        <div class="track" aria-hidden="true"><i id="b-track" style="width:0"></i></div>
+        <ul class="rows">
+          <li><span class="k">Tensione</span><span class="v" id="b-v">–</span></li>
+          <li><span class="k">Corrente</span><span class="v" id="b-a">–</span></li>
+          <li><span class="k">Potenza</span><span class="v" id="b-w">–</span></li>
+          <li><span class="k">Autonomia stimata</span><span class="v" id="b-aut">–</span></li>
+        </ul>
+        <p class="fine">Stima su 4,8 kWh nominali, metà scaricabile.</p>
+      </section>
+
+      <section class="panel" aria-labelledby="h-v">
+        <div class="p-head"><h2 id="h-v">Tensione batteria</h2><span class="meta" id="v-meta">–</span></div>
+        <figure>
+          <svg class="chart" id="c-v" role="img" aria-labelledby="cap-v"></svg>
+          <figcaption id="cap-v">Tensione della batteria.</figcaption>
+        </figure>
+      </section>
+
+      <section class="panel" aria-labelledby="h-day">
+        <div class="p-head"><h2 id="h-day">Energia al giorno</h2><span class="meta" id="d-meta">–</span></div>
+        <figure>
+          <svg class="chart" id="c-day" role="img" aria-labelledby="cap-day"></svg>
+          <figcaption id="cap-day">Energia FV prodotta ogni giorno; la barra scura è oggi, ancora parziale.</figcaption>
+        </figure>
+      </section>
+    </div>
+  </div>
+
+  <a class="settings-link" href="#impostazioni">Impostazioni inverter <span id="cfg-count"></span></a>
+</main>
+
+<main class="wrap" id="settings" hidden>
+  <div class="title-row">
+    <div class="title-main">
+      <a class="back" href="#">← Impianto</a>
+      <h1>Impostazioni inverter</h1>
+      <p class="finding">Valori letti dall'inverter (QPIRI). Sola lettura: si modificano dal bot Telegram.</p>
+    </div>
+  </div>
+  <section class="grp" aria-labelledby="g-ac">
+    <h2 id="g-ac">Alimentazione</h2>
+    <div class="kv" id="kv-ac"></div>
+  </section>
+  <section class="grp" aria-labelledby="g-batt">
+    <h2 id="g-batt">Batteria</h2>
+    <p class="note"><span class="pill">Da rivedere</span> Cutoff e ritorno a rete sono bassi per batterie AGM da standby: da rivalutare dopo qualche giorno di storico.</p>
+    <div class="kv" id="kv-batt"></div>
+  </section>
+  <section class="grp" aria-labelledby="g-chg">
+    <h2 id="g-chg">Carica e priorità</h2>
+    <div class="kv" id="kv-chg"></div>
+  </section>
+</main>
+
+<noscript><p class="wrap">La dashboard richiede JavaScript per leggere i dati dall'inverter.</p></noscript>
+
 <script>
-let H=24;const $=i=>document.getElementById(i),J=async u=>(await fetch(u)).json(),cs=n=>getComputedStyle(document.documentElement).getPropertyValue(n);
-function draw(id,ts,S,C,bars){const c=$(id),d=devicePixelRatio||1,w=c.width=c.clientWidth*d,h=c.height=c.clientHeight*d,x=c.getContext('2d');
-const all=S.flat().filter(v=>v!=null);if(!all.length)return;const lo=bars?0:Math.min(...all);let hi=Math.max(...all);if(hi<=lo)hi=lo+1;
-const L=34*d,X=i=>L+i*(w-L-6*d)/Math.max(ts.length-1,1),Y=v=>h-16*d-(v-lo)*(h-26*d)/(hi-lo);
-x.font=10*d+'px system-ui';x.fillStyle=cs('--mut');
-x.fillText(hi.toFixed(hi<100?1:0),2*d,10*d);x.fillText(lo.toFixed(lo<100&&lo%1?1:0),2*d,h-16*d);
-const f=t=>new Date(t*1000).toLocaleString('it',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
-x.fillText(f(ts[0]),L,h-3*d);x.textAlign='right';x.fillText(f(ts[ts.length-1]),w-6*d,h-3*d);x.textAlign='left';
-S.forEach((s,k)=>{x.strokeStyle=x.fillStyle=cs(C[k]);x.lineWidth=1.6*d;
-if(bars){const bw=(w-L)/s.length*.7;s.forEach((v,i)=>x.fillRect(X(i)-bw/2,Y(v),bw,Y(0)-Y(v)))}
-else{x.beginPath();s.forEach((v,i)=>i?x.lineTo(X(i),Y(v)):x.moveTo(X(i),Y(v)));x.stroke()}})}
-async function load(){try{const n=await J('/api/now'),g=n.gs||{},age=Math.round((Date.now()/1000-n.ts)/60),a=[];
-if(!n.ts||age>3)a.push('Nessun dato da '+(n.ts?age+' min':'avvio'));a.push(...n.faults);
-$('al').style.display=a.length?'block':'none';$('al').innerHTML=a.join('<br>');
-const cd=[['FV',g.pv_w,'W',g.pv_v+' V'],['Carico',g.out_w,'W',g.load_pct+' %'],['Batteria',g.batt_v,'V',g.batt_pct+' % · +'+g.chg_a+' / -'+g.dis_a+' A'],
-['Modo',n.mode_name,'',n.faults.length?n.faults.length+' allarmi':'nessun allarme'],['Temperatura',g.temp_c,'°C',''],['Rete',g.grid_v,'V','']];
-$('cards').innerHTML=cd.map(c=>`<div class=c><small>${c[0]}</small><b>${c[1]??'-'} ${c[2]}</b><small>${c[3]}</small></div>`).join('');
-$('cfg').innerHTML=Object.entries(n.cfg).map(([k,v])=>`<tr><td>${k}<td>${v}`).join('');
-const s=await J('/api/series?h='+H),d=await J('/api/daily');
-draw('c1',s.ts,[s.pv_w,s.out_w],['--pv','--ld']);draw('c2',s.ts,[s.batt_v],['--bt']);draw('c3',d.ts,[d.kwh],['--pv'],true)}catch(e){$('al').style.display='block';$('al').textContent='Dashboard non raggiungibile'}}
-load();setInterval(load,30000);
+'use strict';
+const $ = (id) => document.getElementById(id);
+const RANGE = { 24: 'ultime 24 ore', 168: 'ultimi 7 giorni', 720: 'ultimi 30 giorni' };
+const USABLE_KWH = 4.8 * 0.5;
+let H = 24, NOW = null, SER = null, DAY = null, busy = false, timer = 0;
+
+const fmt = (v, d = 0) => (v === null || v === undefined || !Number.isFinite(+v)) ? '–'
+  : new Intl.NumberFormat('it-IT', { minimumFractionDigits: d, maximumFractionDigits: d }).format(+v);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const clock = (ts) => new Date(ts * 1000).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+const dayLbl = (ts) => new Date(ts * 1000).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' });
+
+/* ---------- SVG ---------- */
+const NS = 'http://www.w3.org/2000/svg';
+const el = (tag, attrs = {}, parent) => {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+};
+const txt = (parent, x, y, s, attrs = {}) => {
+  const e = el('text', Object.assign({ x, y }, attrs), parent);
+  e.textContent = s;
+  return e;
+};
+function frame(svg, h) {
+  const w = Math.max(240, Math.round(svg.parentElement.getBoundingClientRect().width));
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.setAttribute('width', w);
+  svg.setAttribute('height', h);
+  svg.replaceChildren();
+  return { w, h };
+}
+function scaleY(min, max, n) {
+  if (!(max > min)) max = min + 1;
+  const raw = (max - min) / n;
+  const p = Math.pow(10, Math.floor(Math.log10(raw)));
+  const f = raw / p;
+  const step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
+  const lo = Math.floor(min / step) * step;
+  const hi = Math.ceil(max / step) * step;
+  const ticks = [];
+  for (let v = lo; v <= hi + step / 2; v += step) ticks.push(+v.toFixed(6));
+  return { lo, hi, ticks };
+}
+function empty(svg, w, h, msg) {
+  el('line', { x1: 42, x2: w - 10, y1: h - 18, y2: h - 18, stroke: 'var(--grid)', 'stroke-width': 1 }, svg);
+  txt(svg, 42, h / 2, msg, { 'font-size': 12, fill: 'var(--muted)' });
+}
+
+function lineChart(svg, ts, lines, opts = {}) {
+  const h = opts.height || 230;
+  const { w } = frame(svg, h);
+  const P = { l: 44, r: 10, t: opts.top || 20, b: 18 };
+  const pw = w - P.l - P.r, ph = h - P.t - P.b;
+  const vals = lines.flatMap((l) => l.values).filter((v) => Number.isFinite(v));
+  if (!vals.length || ts.length < 2) { empty(svg, w, h, opts.emptyMsg || 'Nessun dato in questo periodo.'); return; }
+  let min = opts.min !== undefined ? opts.min : Math.min(...vals);
+  let max = Math.max(...vals);
+  if (opts.pad) { min -= opts.pad; max += opts.pad; }
+  const { lo, hi, ticks } = scaleY(min, max, 4);
+  const X = (i) => P.l + i * pw / (ts.length - 1);
+  const Y = (v) => P.t + ph - (v - lo) / (hi - lo) * ph;
+  const fy = opts.fmtY || ((v) => fmt(v));
+  for (const t of ticks) {
+    const y = Y(t);
+    el('line', { x1: P.l, x2: P.l + pw, y1: y, y2: y, stroke: 'var(--grid)', 'stroke-width': 1 }, svg);
+    txt(svg, P.l - 8, y + 3.5, fy(t), { 'text-anchor': 'end', fill: 'var(--muted)' });
+  }
+  const ix = [0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(f * (ts.length - 1)));
+  ix.forEach((i, k) => {
+    const anchor = k === 0 ? 'start' : k === ix.length - 1 ? 'end' : 'middle';
+    txt(svg, X(i), h - 4, opts.day ? dayLbl(ts[i]) : clock(ts[i]), { 'text-anchor': anchor, fill: 'var(--muted)' });
+  });
+  if (opts.ref && opts.ref.value >= lo && opts.ref.value <= hi) {
+    const y = Y(opts.ref.value);
+    el('line', { x1: P.l, x2: P.l + pw, y1: y, y2: y, stroke: 'var(--control)', 'stroke-width': 1, 'stroke-dasharray': '2 3' }, svg);
+    txt(svg, P.l + pw, y - 5, opts.ref.label, { 'text-anchor': 'end', 'font-size': 10, fill: 'var(--muted)' });
+  }
+  for (const l of lines) {
+    let d = '';
+    l.values.forEach((v, i) => { if (Number.isFinite(v)) d += (d ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1); });
+    el('path', { d, fill: 'none', stroke: l.color, 'stroke-width': l.width, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+  }
+  if (opts.annotate) {
+    const l = lines[0];
+    let im = -1;
+    l.values.forEach((v, i) => { if (Number.isFinite(v) && (im < 0 || v > l.values[im])) im = i; });
+    if (im >= 0 && l.values[im] > 0) {
+      const px = X(im), py = Y(l.values[im]);
+      el('line', { x1: px, x2: px, y1: P.t - 3, y2: py - 3, stroke: 'var(--control)', 'stroke-width': 1, 'stroke-dasharray': '1 3' }, svg);
+      const label = 'max ' + fy(l.values[im]) + ' · ' + (opts.day ? dayLbl(ts[im]) : clock(ts[im]));
+      txt(svg, Math.min(Math.max(px, P.l + 2), P.l + pw - label.length * 5.6), P.t - 6, label, { fill: 'var(--muted)' });
+    }
+  }
+}
+
+function barChart(svg, ts, values, opts = {}) {
+  const h = opts.height || 190;
+  const { w } = frame(svg, h);
+  const P = { l: 44, r: 10, t: 14, b: 18 };
+  const pw = w - P.l - P.r, ph = h - P.t - P.b;
+  if (!values.length) { empty(svg, w, h, 'Nessun dato in questo periodo.'); return; }
+  const { lo, hi, ticks } = scaleY(0, Math.max(...values), 4);
+  const Y = (v) => P.t + ph - (v - lo) / (hi - lo) * ph;
+  for (const t of ticks) {
+    const y = Y(t);
+    el('line', { x1: P.l, x2: P.l + pw, y1: y, y2: y, stroke: 'var(--grid)', 'stroke-width': 1 }, svg);
+    txt(svg, P.l - 8, y + 3.5, fmt(t), { 'text-anchor': 'end', fill: 'var(--muted)' });
+  }
+  const n = values.length, slot = pw / n, bw = Math.max(3, slot - 2);
+  const y0 = Y(0);
+  values.forEach((v, i) => {
+    const x = P.l + slot * i + (slot - bw) / 2;
+    const y1 = Y(v);
+    el('rect', { x: x.toFixed(1), y: y1.toFixed(1), width: bw.toFixed(1), height: Math.max(0, (y0 - y1)).toFixed(1), fill: i === n - 1 ? 'var(--text)' : 'var(--accent)' }, svg);
+  });
+  const ix = [0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(f * (n - 1)));
+  ix.forEach((i, k) => {
+    const anchor = k === 0 ? 'start' : k === ix.length - 1 ? 'end' : 'middle';
+    txt(svg, P.l + slot * i + slot / 2, h - 4, i === n - 1 ? 'oggi' : dayLbl(ts[i]), { 'text-anchor': anchor, fill: 'var(--muted)' });
+  });
+}
+
+/* ---------- dati ---------- */
+const battPower = (gs) => (Number(gs.chg_a) > 0.2 ? Number(gs.batt_v) * Number(gs.chg_a)
+  : Number(gs.dis_a) > 0.2 ? -Number(gs.batt_v) * Number(gs.dis_a) : 0);
+
+function paintFinding(gs, faults) {
+  const pv = +gs.pv_w || 0, load = +gs.out_w || 0, bp = battPower(gs);
+  let html;
+  if (faults.length) {
+    html = `<b>${faults.length === 1 ? '1 allarme attivo' : faults.length + ' allarmi attivi'}</b>: ${esc(faults.join('; '))}`;
+  } else if (pv >= load) {
+    html = `<b>${fmt(pv - load)} W in eccesso</b> dal FV: ${fmt(load)} W vanno alla casa` +
+      (bp > 0 ? `, ${fmt(bp)} W in carica alla batteria` : '') + '.';
+  } else {
+    html = `<b>${fmt(load - pv)} W scoperti</b> dal FV: la casa consuma ${fmt(load)} W` +
+      (bp < 0 ? `, la batteria ne dà ${fmt(-bp)} W` : '') + '.';
+  }
+  $('finding').innerHTML = html;
+}
+
+function paintStatus(n, faults) {
+  const dot = $('dot'), stamp = $('stamp');
+  dot.className = 'dot';
+  if (!n || !n.ts) { stamp.textContent = 'nessun dato'; dot.classList.add('bad'); return; }
+  const age = Math.max(0, Math.round((Date.now() / 1000 - n.ts) / 60));
+  if (faults.length) { stamp.textContent = 'allarme · ' + clock(n.ts); dot.classList.add('bad'); return; }
+  if (age > 3) { stamp.textContent = 'fermo da ' + age + ' min'; dot.classList.add('warn'); return; }
+  stamp.textContent = 'aggiornato ' + clock(n.ts);
+}
+
+function notice(msg, bad) {
+  const n = $('notice');
+  if (!msg) { n.hidden = true; n.textContent = ''; return; }
+  n.hidden = false;
+  n.className = 'notice' + (bad ? ' bad' : '');
+  n.textContent = msg;
+}
+
+function paintFlow(gs) {
+  const pv = +gs.pv_w || 0, load = +gs.out_w || 0;
+  $('f-pv').innerHTML = `${fmt(pv)} <span class="u">W</span>`;
+  $('f-pvs').textContent = Number.isFinite(+gs.pv_v) ? fmt(gs.pv_v, 1) + ' V in ingresso' : '–';
+  $('f-house').innerHTML = `${fmt(load)} <span class="u">W</span>`;
+  $('f-houses').textContent = Number.isFinite(+gs.load_pct) ? fmt(gs.load_pct) + '% del nominale' : '–';
+  $('f-batt').innerHTML = `${fmt(gs.batt_pct)} <span class="u">%</span>`;
+  const bp = battPower(gs);
+  const amps = (+gs.chg_a > 0.2 ? '+' + fmt(gs.chg_a, 1) : +gs.dis_a > 0.2 ? '−' + fmt(gs.dis_a, 1) : fmt(0, 1)) + ' A';
+  $('f-batts').textContent = `${fmt(gs.batt_v, 2)} V · ${amps} · ${bp > 0 ? '+' : bp < 0 ? '−' : ''}${fmt(Math.abs(bp))} W`;
+  const surplus = pv - load;
+  const link = $('link-batt');
+  const charging = +gs.chg_a > 0.2, discharging = +gs.dis_a > 0.2;
+  link.classList.toggle('rev', discharging && !charging);
+  link.lastElementChild.textContent = charging ? 'in carica' : discharging ? 'in scarica' : 'a riposo';
+  $('flow-sentence').textContent = surplus >= 0
+    ? `FV ${fmt(pv)} W copre la casa (${fmt(load)} W): ${fmt(surplus)} W in eccesso, di cui ${fmt(Math.max(0, bp))} W misurati in carica. La differenza è autoconsumo e perdite di conversione.`
+    : `FV ${fmt(pv)} W non copre la casa (${fmt(load)} W): mancano ${fmt(-surplus)} W${bp < 0 ? `, la batteria ne fornisce ${fmt(-bp)} W` : ''}.`;
+}
+
+function paintBattery(gs) {
+  const soc = +gs.batt_pct, bp = battPower(gs);
+  $('b-soc').textContent = fmt(soc);
+  $('b-track').style.width = Math.max(0, Math.min(100, soc || 0)) + '%';
+  const st = $('b-state');
+  const charging = +gs.chg_a > 0.2, discharging = +gs.dis_a > 0.2;
+  st.className = 'state' + (charging ? ' on' : '');
+  st.lastElementChild.textContent = charging ? 'in carica' : discharging ? 'in scarica' : 'a riposo';
+  $('b-v').textContent = fmt(gs.batt_v, 2) + ' V';
+  $('b-a').textContent = (charging ? '+' + fmt(gs.chg_a, 1) : discharging ? '−' + fmt(gs.dis_a, 1) : fmt(0, 1)) + ' A';
+  $('b-w').textContent = (bp > 0 ? '+' : bp < 0 ? '−' : '') + fmt(Math.abs(bp)) + ' W';
+  const load = +gs.out_w || 0;
+  const hours = load > 40 && Number.isFinite(soc) ? USABLE_KWH * soc / 100 / (load / 1000) : NaN;
+  $('b-aut').textContent = Number.isFinite(hours)
+    ? (hours >= 1 ? Math.floor(hours) + ' h ' + Math.round((hours % 1) * 60) + ' min' : Math.round(hours * 60) + ' min')
+    : '–';
+}
+
+function paintScope(cfg) {
+  const kw = +cfg['W nominali'];
+  const parts = [];
+  if (kw > 0) parts.push(fmt(kw / 1000, 1).replace(',0', '') + ' kW');
+  if (cfg['Batteria nominale V']) parts.push(fmt(cfg['Batteria nominale V']) + ' V');
+  if (cfg['Tipo batteria']) parts.push(cfg['Tipo batteria']);
+  $('scope').textContent = parts.length ? 'Impianto off-grid · ' + parts.join(' · ') : 'Impianto off-grid';
+  const count = cfg ? Object.keys(cfg).length : 0;
+  $('cfg-count').textContent = count ? count + ' valori' : '';
+  if (!$('settings').hidden) paintSettings(cfg);
+}
+
+function paintSettings(cfg) {
+  const groups = [
+    ['kv-ac', ['AC in V', 'AC in A', 'Uscita V', 'Frequenza Hz', 'Uscita A', 'VA nominali', 'W nominali']],
+    ['kv-batt', ['Batteria nominale V', 'Bulk V', 'Float V', 'Tipo batteria', 'Cutoff batteria V', 'Ritorno a rete sotto V', 'Ritorno a batteria sopra V']],
+    ['kv-chg', ['Max carica A', 'Max carica AC A', "Priorita' carica", "Priorita' uscita", 'Range ingresso']]
+  ];
+  for (const [id, keys] of groups) {
+    const box = $(id);
+    box.replaceChildren();
+    for (const k of keys) {
+      const row = document.createElement('div');
+      const kk = document.createElement('span'); kk.className = 'k'; kk.textContent = k;
+      const vv = document.createElement('span'); vv.className = 'v';
+      const raw = cfg ? cfg[k] : undefined;
+      vv.textContent = raw === undefined || raw === null ? '–'
+        : (typeof raw === 'number' ? fmt(raw, Number.isInteger(raw) ? 0 : 1) : String(raw));
+      row.append(kk, vv);
+      box.append(row);
+    }
+  }
+}
+
+function paintCharts(cfg) {
+  if ($('overview').hidden) return;
+  const narrow = window.innerWidth < 640;
+  paintProduct(narrow);
+  paintVoltage(cfg, narrow);
+  paintDaily(narrow);
+}
+
+function paintProduct(narrow) {
+  if (!SER || !SER.ts || !SER.ts.length) return;
+  $('cap-prod').textContent = 'Produzione FV e potenza del carico, ' + RANGE[H] + '.';
+  lineChart($('c-prod'), SER.ts, [
+    { values: SER.pv_w || [], color: 'var(--accent)', width: 2 },
+    { values: SER.out_w || [], color: 'var(--text)', width: 1.5 }
+  ], { height: narrow ? 190 : 230, min: 0, annotate: true });
+}
+
+function paintVoltage(cfg, narrow) {
+  if (!SER || !SER.ts || !SER.ts.length) return;
+  $('cap-v').textContent = 'Tensione di ricarica, ' + RANGE[H] + '.';
+  const v = (SER.batt_v || []).filter((x) => Number.isFinite(x));
+  const min = v.length ? Math.min(...v) : 0, max = v.length ? Math.max(...v) : 1;
+  $('v-meta').textContent = v.length ? fmt(min, 1) + '–' + fmt(max, 1) + ' V' : '–';
+  const ref = +cfg['Float V'] > 0 ? { value: +cfg['Float V'], label: 'float ' + fmt(cfg['Float V'], 1) + ' V' } : null;
+  lineChart($('c-v'), SER.ts, [
+    { values: SER.batt_v || [], color: 'var(--text)', width: 1.5 }
+  ], { height: narrow ? 160 : 186, pad: 0.25, fmtY: (x) => fmt(x, 1), ref: ref, top: 16 });
+}
+
+function paintDaily(narrow) {
+  if (!DAY || !DAY.ts || !DAY.ts.length) return;
+  const kwh = DAY.kwh || [];
+  const total = kwh.reduce((a, b) => a + (+b || 0), 0);
+  const today = kwh.length ? +kwh[kwh.length - 1] : NaN;
+  $('d-meta').textContent = 'oggi ' + fmt(today, 1) + ' kWh · 30 d ' + fmt(total) + ' kWh';
+  barChart($('c-day'), DAY.ts, kwh, { height: narrow ? 168 : 186 });
+}
+
+function render() {
+  if (!NOW) return;
+  const gs = NOW.gs || {}, cfg = NOW.cfg || {}, faults = NOW.faults || [];
+  paintStatus(NOW, faults);
+  paintFinding(gs, faults);
+  paintFlow(gs);
+  paintBattery(gs);
+  paintScope(cfg);
+  paintCharts(cfg);
+  if (faults.length) notice('Allarmi inverter: ' + faults.join('; '), true);
+  else notice(null);
+}
+
+/* ---------- rete ---------- */
+const json = (u) => fetch(u, { cache: 'no-store' }).then((r) => {
+  if (!r.ok) throw new Error(u + ' ' + r.status);
+  return r.json();
+});
+
+async function load() {
+  if (busy) return;
+  busy = true;
+  $('refresh').disabled = true;
+  try {
+    const [n, s, d] = await Promise.all([json('/api/now'), json('/api/series?h=' + H), json('/api/daily')]);
+    NOW = n; SER = s; DAY = d;
+    render();
+  } catch (e) {
+    const last = NOW && NOW.ts ? ' Ultimo dato ' + clock(NOW.ts) + '.' : '';
+    notice('Dati non aggiornabili.' + last, false);
+    if (NOW) paintStatus(NOW, NOW.faults || []);
+    else { $('stamp').textContent = 'nessun dato'; $('dot').classList.add('bad'); }
+  } finally {
+    busy = false;
+    $('refresh').disabled = false;
+  }
+}
+
+function schedule() {
+  clearInterval(timer);
+  timer = setInterval(() => { if (!document.hidden) load(); }, 30000);
+}
+
+document.querySelectorAll('.seg button').forEach((b) => {
+  b.addEventListener('click', () => {
+    H = +b.dataset.h;
+    document.querySelectorAll('.seg button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    load();
+  });
+});
+$('refresh').addEventListener('click', load);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+
+function route() {
+  const settings = location.hash === '#impostazioni';
+  $('overview').hidden = settings;
+  $('settings').hidden = !settings;
+  if (settings && NOW) paintSettings(NOW.cfg || {});
+  if (!settings) paintCharts(NOW ? NOW.cfg || {} : {});
+  window.scrollTo(0, 0);
+}
+window.addEventListener('hashchange', route);
+
+let rz = 0;
+new ResizeObserver(() => {
+  clearTimeout(rz);
+  rz = setTimeout(() => { if (NOW) paintCharts(NOW.cfg || {}); }, 120);
+}).observe($('overview'));
+
+route();
+load();
+schedule();
 </script></body></html>
