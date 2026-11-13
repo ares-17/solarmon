@@ -3,4 +3,7 @@ Description=solarmon - backup del database
 
 [Service]
 Type=oneshot
+User=solarmon
+Group=solarmon
+StateDirectory=solarmon
 ExecStart=/opt/solarmon/backup.sh

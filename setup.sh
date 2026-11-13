@@ -31,6 +31,9 @@ getent group "$SERVICE_GROUP" >/dev/null || groupadd --system "$SERVICE_GROUP"
 id -u "$SERVICE_USER" >/dev/null 2>&1 || useradd --system --gid "$SERVICE_GROUP" \
   --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER"
 usermod -aG "$INVERTER_GROUP" "$SERVICE_USER"
+if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+  usermod -aG "$SERVICE_GROUP" "$SUDO_USER"
+fi
 
 install -d -m 755 -o root -g root "$APP_DIR"
 install -m 644 "$SRC_DIR/solarmon.py" "$APP_DIR/solarmon.py"

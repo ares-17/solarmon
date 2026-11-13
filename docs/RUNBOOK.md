@@ -61,11 +61,16 @@ sudo rm -f /var/lib/solarmon/solar.db-wal /var/lib/solarmon/solar.db-shm
 sudo systemctl start solarmon
 ```
 
-Copia fuori dalla Pi (consigliata, via Tailscale):
+Copia fuori dalla Pi (consigliata, via Tailscale). I backup sono `0640 solarmon:solarmon`:
+`setup.sh` aggiunge l'utente che lancia `sudo` al gruppo `solarmon`, quindi serve un nuovo
+login (o `newgrp solarmon`) prima del primo `rsync`.
 
 ```bash
 rsync -av pi:/var/lib/solarmon/backups/ ~/backup-solarmon/
 ```
+
+Se l'utente non è nel gruppo, la copia fallisce con "Permission denied": verificare con
+`id`, non allargare i permessi del database.
 
 ## 4. Rotazione dei segreti
 
