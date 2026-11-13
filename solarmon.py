@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """solarmon: inverter PI30 (hidraw) -> SQLite + dashboard + dati grezzi JSON + bot Telegram (letture e scritture protette).
 Solo libreria standard (paho-mqtt solo se MQTT_HOST e' impostato)."""
-import calendar, collections, datetime, hmac, json, logging, math, os, secrets, select, signal, sqlite3, sys, threading, time, urllib.parse, urllib.request
+import collections, hmac, json, logging, os, secrets, select, signal, sqlite3, sys, threading, time, urllib.parse, urllib.request
 from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
