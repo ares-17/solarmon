@@ -29,7 +29,6 @@ TG_TOKEN, TG_CHAT, MQTT_HOST = E("TG_TOKEN", ""), E("TG_CHAT", ""), E("MQTT_HOST
 TG_ADMIN = int(E("TG_ADMIN_ID") or TG_CHAT or 0)
 ALLOW_WRITE = E("ALLOW_WRITE", "0") == "1"
 GRID_CONFIRM, GRID_MIN_V = 3, 90.0
-BATT_LOW, REPEAT = float(E("BATT_LOW_V", "47")), int(E("ALERT_REPEAT_MIN", "60")) * 60
 SOLAR_PLACE, SOLAR_LAT, SOLAR_LON = E("SOLAR_PLACE", ""), E("SOLAR_LAT", ""), E("SOLAR_LON", "")
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 log = logging.getLogger("solarmon")
@@ -285,7 +284,7 @@ def parse_cfg(t):
     return out
 
 
-# ---- notifiche con anti-spam: una al cambio di stato, ripetuta al massimo ogni REPEAT secondi finche' persiste
+# ---- notifiche: invia solo al cambio di stato (nessuna ripetizione mentre persiste)
 active = {}
 
 
@@ -673,36 +672,28 @@ def main():
     if not RAW_TOKEN and BIND not in LOOPBACK:
         log.warning("/api/raw risponde 403: BIND_ADDR=%s senza RAW_TOKEN", BIND)
     if TG_TOKEN and TG_CHAT and TG_ADMIN: threading.Thread(target=bot_loop, args=(inv,), daemon=True).start()
-    mq, fails, prev, cfg_ts, store_ts = mqtt_client(), 0, None, 0, 0
-    notify("solarmon avviato (scrittura %s)" % ("ATTIVA" if ALLOW_WRITE else "disattivata"))
+    mq, fails, cfg_ts, store_ts = mqtt_client(), 0, 0, 0
+    notifier = Notifier()
     while True:
         t0 = time.time()
         try:
             gs = parse_gs(inv.query("QPIGS")); mode = inv.query("QMOD")[:1]; ws = inv.query("QPIWS")[:32]
-            fails = 0; alert("nodata", False, "", "Comunicazione con l'inverter ripristinata")
+            fails = 0; alert("nodata", False, "", "Comunicazione con l'inverter ripristinata.")
         except Exception as e:
             fails += 1; log.error("lettura: %s", e)
-            alert("nodata", fails * INTERVAL >= 60, "Inverter non risponde da %d letture (%d s)" % (fails, fails * INTERVAL),
-                  "Comunicazione con l'inverter ripristinata")
+            alert("nodata", fails * INTERVAL >= 60, "Inverter non risponde da %d s (%d letture)." % (fails * INTERVAL, fails),
+                  "Comunicazione con l'inverter ripristinata.")
             time.sleep(INTERVAL); continue
-        if t0 - cfg_ts > 600:  # rilegge la config e segnala modifiche fatte fuori dal bot (es. dal display)
+        if t0 - cfg_ts > 600:  # rilegge periodicamente la config per alimentare la dashboard
             try:
-                new, old = parse_cfg(inv.query("QPIRI")), STATE["cfg"]; cfg_ts = t0; STATE["cfg"] = new
-                diff = ["%s: %s -> %s" % (k, old[k], v) for k, v in new.items() if old and old.get(k) != v]
-                if diff: notify("Configurazione inverter cambiata:\n" + "\n".join(diff))
+                STATE["cfg"] = parse_cfg(inv.query("QPIRI")); cfg_ts = t0
             except Exception as e: log.error("QPIRI: %s", e)
         row = dict(ts=int(t0), **gs, mode=mode, ws=ws)
         with RING_LOCK: RING.append(row)
         STATE.update(ts=int(t0), gs=gs, mode=mode, ws=ws, cycle_s=round(time.time() - t0, 2))
+        notifier.update(gs, mode, ws)
         if t0 - store_ts >= STORE_INTERVAL - 0.5:
             store_ts = t0; con.execute("INSERT OR REPLACE INTO samples VALUES(%s)" % ",".join("?" * len(COLS)), [row[c] for c in COLS]); con.commit()
-        for i, (name, severe) in WS.items():
-            alert("ws%d" % i, ws[i:i + 1] == "1", "%s %s (QPIWS=%s)" % ("GUASTO:" if severe else "Avviso:", name, ws), "Rientrato: " + name)
-        alert("modef", mode == "F", "Inverter in modalita' FAULT (QPIWS=%s)" % ws, "Inverter uscito da FAULT")
-        low = gs["batt_v"] < BATT_LOW or ("batt" in active and gs["batt_v"] < BATT_LOW + 1)
-        alert("batt", low, "Batteria bassa: %.1f V (%d%%)" % (gs["batt_v"], gs["batt_pct"]), "Batteria risalita: %.1f V" % gs["batt_v"])
-        if prev and mode != prev: notify("Modalita': %s -> %s" % (MODES.get(prev, prev), MODES.get(mode, mode)))
-        prev = mode
         if mq: mq.publish("solar/inverter/state", json.dumps(dict(gs, mode=mode, ws=ws)), retain=True)
         time.sleep(max(0.5, INTERVAL - (time.time() - t0)))
 

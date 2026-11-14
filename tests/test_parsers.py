@@ -455,3 +455,13 @@ def test_notifier_sends_alarms_active_at_startup(solarmon):
     n.update(_gs(), "B", overload)
     assert sent == ["Allarmi inverter\nGuasti: Sovraccarico"]
 
+
+def test_legacy_alerts_are_removed(solarmon):
+    import inspect
+    src = inspect.getsource(solarmon)
+    for needle in ("Batteria bassa", "BATT_LOW", "ALERT_REPEAT_MIN",
+                   "solarmon avviato", "Configurazione inverter cambiata",
+                   "Modalita':"):
+        assert needle not in src
+
+

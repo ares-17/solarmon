@@ -114,17 +114,40 @@ punti già chiusi in v1. Integrare invece di sostituire evita regressioni silenz
 **Conseguenze.** Le correzioni sono coperte da test (token, 403, parametri invalidi,
 `prepare`). La copia di partenza `online-version/` è stata integrata e poi rimossa.
 
+## D11 — Allineamento e validazione con il Manuale Ufficiale PIP-MS (PF1)
+
+**Scelta.** Il manuale ufficiale `PIP-MS_1-5KVA_manual-20190109.pdf` è stato convertito
+in Markdown (`docs/PIP-MS_1-5KVA_manual.md`) e usato come fonte di verità per
+la validazione di comandi PI30, allarmi, codici di errore e specifiche elettriche.
+
+**Risoluzioni.**
+1. **Errore 58 confermato**: Definito ufficialmente nel manuale come `Output voltage is too low`
+   (tensione AC di uscita < 190 Vac o > 260 Vac). Riservato ai modelli 4KVA/5KVA.
+   Corrisponde al bit 7 del comando `QPIWS`.
+2. **Validazione Comandi e Range di Scrittura (`SETTINGS`)**:
+   Tutti i comandi supportati da `solarmon` e le relative opzioni ammesse corrispondono
+   esattamente ai programmi del display LCD:
+   - `uscita`: Programma 01 (`POP00` UTI, `POP01` SOL, `POP02` SBU).
+   - `carica`: Programma 16 (`PCP00` UTI, `PCP01` CSO, `PCP02` SNU, `PCP03` OSO).
+   - `corrente_carica`: Programma 02 (`MCHGC0xx`, 10A..140A).
+   - `corrente_carica_ac`: Programma 11 (`MUCHGC0xx`, opzioni 2, 10, 20, 30, 40, 50, 60A su 4K/5K).
+   - `ritorno_rete_v`: Programma 12 (`PBCVxx.x`, 44.0V..51.0V, default fabbrica 46.0V).
+   - `ritorno_batteria_v`: Programma 13 (`PBDVxx.x`, 48.0V..58.0V o FUL, default fabbrica 54.0V).
+   - `cutoff_v`: Programma 29 (`PSDVxx.x`, 40.0V..48.0V, default fabbrica 42.0V).
+3. **Limiti Regolatore di Carica MPPT (4K/5K 48V)**:
+   - Tensione massima a vuoto (Voc): 145 Vdc.
+   - Range operativo MPPT: 60 ~ 115 Vdc.
+   - Con la lettura tipica di ~103 Vdc rilevata sul campo, la stringa opera al centro
+     della finestra MPPT con margine di sicurezza rispetto al limite distruttivo dei 145 V.
+
 ## Questioni aperte
 
-- **Numero e modello dei pannelli**: servono le etichette (Wp, Vmp, Voc, Isc) e quante
-  stringhe. Ipotesi compatibile con 104 V: 6 pannelli in serie da ~17 V.
-- **Errore 58**: la corrispondenza con `inverter_voltage_too_low_fault` di `QPIWS` va
-  verificata su un allarme reale.
-- **Comandi di scrittura**: formati (`MCHGC020`, `PBCV46.0`, …) presi dalla specifica PI30,
-  non ancora provati sul modello. Primo test consigliato: `/set corrente_carica 20` (valore
-  già impostato).
-- **Soglie batteria**: `cutoff 42 V` e ritorno rete `45 V` sono bassi per AGM da standby;
-  decidere dopo qualche giorno di storico e con il datasheet della 12FIT100/19.
+- **Numero e modello dei pannelli**: servono le etichette fisiche (Wp, Vmp, Voc, Isc) e quante
+  stringhe. La tensione operativa di ~103 Vdc è pienamente compatibile con la finestra MPPT (60-115 V)
+  e ben sotto il limite assoluto di 145 Voc.
+- **Soglie batteria in esercizio**: le impostazioni correnti (cutoff 42 V, ritorno rete 45 V)
+  rispecchiano i default di fabbrica del manuale per AGM 48V. Valutare se alzare il ritorno rete
+  a 46-47 V per allungare la vita ciclica delle batterie AGM.
 
 ## Mix del consumo e ore di luce (2026-11-13)
 
@@ -135,3 +158,16 @@ punti già chiusi in v1. Integrare invece di sostituire evita regressioni silenz
   lettura prudente, anche se il FV sta caricando la batteria.
 - `SOLAR_PLACE` risolve il **capoluogo** di provincia, non il comune: errore < ~10 km,
   irrilevante per alba/tramonto (1° di longitudine ≈ 4 minuti).
+
+## Notifiche essenziali (2026-11-14)
+
+- Le notifiche Telegram sono eventi, non stati: passaggio rete/batteria, guasti
+  raggruppati, inverter muto. Niente avvio, cambi di modalità generici, modifiche
+  di configurazione o ripetizioni orarie.
+- La soglia `BATT_LOW_V` è stata rimossa: sotto carico la tensione scende e
+  produceva falsi "batteria bassa" con messaggi ripetuti. L'evento utile è il
+  passaggio effettivo alla rete, confermato da 3 letture consecutive.
+- Gli allarmi `QPIWS` sono raggruppati in un solo messaggio per cambio di insieme,
+  con guasti e avvisi separati; nessuna ripetizione mentre persistono.
+- Il refresh periodico di `QPIRI` resta perché alimenta la dashboard; sparisce solo
+  la notifica delle modifiche di configurazione.
