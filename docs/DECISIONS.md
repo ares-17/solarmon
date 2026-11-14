@@ -125,3 +125,13 @@ punti già chiusi in v1. Integrare invece di sostituire evita regressioni silenz
   già impostato).
 - **Soglie batteria**: `cutoff 42 V` e ritorno rete `45 V` sono bassi per AGM da standby;
   decidere dopo qualche giorno di storico e con il datasheet della 12FIT100/19.
+
+## Mix del consumo e ore di luce (2026-11-13)
+
+- Il mix attribuisce il **carico**, non il bilancio: FV diretto `min(pv_w, out_w)` fuori
+  bypass, batteria `max(0, out_w - pv_w)` fuori bypass, rete tutto `out_w` quando
+  `mode='L'`. Le ricariche restano fuori, così le tre voci chiudono sempre sul consumo.
+- In bypass l'inverter passa l'ingresso AC al carico: attribuire tutto alla rete è la
+  lettura prudente, anche se il FV sta caricando la batteria.
+- `SOLAR_PLACE` risolve il **capoluogo** di provincia, non il comune: errore < ~10 km,
+  irrilevante per alba/tramonto (1° di longitudine ≈ 4 minuti).
