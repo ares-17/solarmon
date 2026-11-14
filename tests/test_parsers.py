@@ -217,3 +217,31 @@ def test_prepare_rejects_cutoff_above_back_to_grid(solarmon):
 
 def test_prepare_maps_output_priority(solarmon):
     assert solarmon.prepare("uscita", "sbu", CFG) == ("POP02", "Priorita' uscita")
+
+
+# --- posizione solare -------------------------------------------------------
+
+
+def test_solar_site_reads_explicit_coordinates(solarmon, monkeypatch):
+    monkeypatch.setattr(solarmon, "SOLAR_LAT", "41,90")
+    monkeypatch.setattr(solarmon, "SOLAR_LON", "12,49")
+    monkeypatch.setattr(solarmon, "SOLAR_PLACE", "")
+    site = solarmon.solar_site()
+    assert site == {"place": "coordinate", "lat": 41.9, "lon": 12.49}
+
+
+def test_solar_site_resolves_province_capital(solarmon, monkeypatch):
+    monkeypatch.setattr(solarmon, "SOLAR_LAT", "")
+    monkeypatch.setattr(solarmon, "SOLAR_LON", "")
+    monkeypatch.setattr(solarmon, "SOLAR_PLACE", "roma, rm")
+    site = solarmon.solar_site()
+    assert site["place"] == "roma, rm"
+    assert 41.5 < site["lat"] < 42.3
+    assert 12.0 < site["lon"] < 12.9
+
+
+def test_solar_site_returns_none_when_unset(solarmon, monkeypatch):
+    monkeypatch.setattr(solarmon, "SOLAR_LAT", "")
+    monkeypatch.setattr(solarmon, "SOLAR_LON", "")
+    monkeypatch.setattr(solarmon, "SOLAR_PLACE", "posto-inventato, ZZ")
+    assert solarmon.solar_site() is None
