@@ -297,3 +297,38 @@ def test_mix_without_samples_returns_zeroes(db, server):
     with closing(urllib.request.urlopen(server + "/api/mix?h=24", timeout=5)) as response:
         body = json.load(response)
     assert body["load_kwh"] == 0 and body["samples"] == 0
+
+
+def test_mix_parts_always_sum_to_load(db, server, monkeypatch):
+    monkeypatch.setattr(db, "STORE_INTERVAL", 360)  # 3335 W per 6 min = 0,3335 kWh
+    now = int(time.time())
+    con = db.connect()
+    rows = [
+        (now - 30, 3335, 3335, "B"),  # FV diretto
+        (now - 20, 0, 3335, "B"),     # batteria
+        (now - 10, 0, 3335, "L"),     # rete
+    ]
+    for ts, pv, out, mode in rows:
+        con.execute("INSERT INTO samples(ts,pv_w,out_w,mode,grid_v,batt_v,chg_a,dis_a)"
+                    " VALUES(?,?,?,?,?,?,?,?)", (ts, pv, out, mode, 230, 52, 0, 0))
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/mix?h=1", timeout=5)) as response:
+        body = json.load(response)
+    parts = body["solar_kwh"] + body["batt_kwh"] + body["grid_kwh"]
+    assert parts == pytest.approx(body["load_kwh"], abs=1e-6)
+
+
+def test_mix_unknown_mode_is_not_bypass(db, server, monkeypatch):
+    monkeypatch.setattr(db, "STORE_INTERVAL", 3600)
+    now = int(time.time())
+    con = db.connect()
+    con.execute("INSERT INTO samples(ts,pv_w,out_w,mode,grid_v,batt_v,chg_a,dis_a)"
+                " VALUES(?,?,?,?,?,?,?,?)", (now - 30, 200, 500, "?", 230, 52, 0, 0))
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/mix?h=1", timeout=5)) as response:
+        body = json.load(response)
+    assert body["solar_kwh"] == 0.2
+    assert body["batt_kwh"] == 0.3
+    assert body["grid_kwh"] == 0

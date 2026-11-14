@@ -207,10 +207,11 @@ def mix_payload(h):
             " COALESCE(SUM(CASE WHEN mode='L' THEN COALESCE(out_w,0) ELSE 0 END),0),"
             " COALESCE(SUM(COALESCE(out_w,0)),0), COUNT(*), MIN(ts), MAX(ts)"
             " FROM samples WHERE ts>?", (since,)).fetchone()
-    solar, batt, grid, load, n, first, last = row
+    solar, batt, grid, _load, n, first, last = row
     k = STORE_INTERVAL / 3600000.0
-    return {"h": h, "solar_kwh": round(solar * k, 3), "batt_kwh": round(batt * k, 3),
-            "grid_kwh": round(grid * k, 3), "load_kwh": round(load * k, 3),
+    parts = [round(x * k, 3) for x in (solar, batt, grid)]
+    return {"h": h, "solar_kwh": parts[0], "batt_kwh": parts[1],
+            "grid_kwh": parts[2], "load_kwh": round(sum(parts), 3),
             "samples": n, "from": first, "to": last}
 
 

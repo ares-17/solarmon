@@ -331,7 +331,8 @@ figcaption{margin-top:6px;font-size:13px;color:var(--muted)}
 const $ = (id) => document.getElementById(id);
 const RANGE = { 24: 'ultime 24 ore', 168: 'ultimi 7 giorni', 720: 'ultimi 30 giorni' };
 const USABLE_KWH = 4.8 * 0.5;
-let H = 24, NOW = null, SER = null, DAY = null, MIX = null, SUN = null, busy = false, timer = 0;
+let H = 24, NOW = null, SER = null, DAY = null, MIX = null, SUN = null,
+  MIX_ERR = false, SUN_ERR = false, busy = false, timer = 0;
 
 const fmt = (v, d = 0) => (v === null || v === undefined || !Number.isFinite(+v)) ? '–'
   : new Intl.NumberFormat('it-IT', { minimumFractionDigits: d, maximumFractionDigits: d }).format(+v);
@@ -625,6 +626,7 @@ function paintMix() {
   ring.replaceChildren();
   key.replaceChildren();
   bar.replaceChildren();
+  if (MIX_ERR) { meta.textContent = 'dati non disponibili'; return; }
   meta.textContent = total > 0 ? fmt(total, 1) + ' kWh consumati · ' + RANGE[H] : 'nessun consumo nel periodo';
   if (!total) return;
   const pct = mixShares(vals);
@@ -675,15 +677,17 @@ function paintMix() {
 }
 
 function paintProduct(narrow) {
+  $('sun-hint').hidden = !(SUN && SUN.configured === false);
   if (!SER || !SER.ts || !SER.ts.length) return;
   let cap = 'Produzione FV e potenza del carico, ' + RANGE[H] + '.';
   const sun = SUN && SUN.configured ? SUN.days : null;
   if (sun && sun.length) {
     const d = sun[sun.length - 1];
     cap += H === 24 ? ` Sole ${clock(d.rise)}–${clock(d.set)}.` : ' Bande ambra: ore di luce locali.';
+  } else if (SUN_ERR) {
+    cap += ' Ore di luce non disponibili.';
   }
   $('cap-prod').textContent = cap;
-  $('sun-hint').hidden = !!(SUN && SUN.configured);
   lineChart($('c-prod'), SER.ts, [
     { values: SER.pv_w || [], color: 'var(--accent)', width: 2 },
     { values: SER.out_w || [], color: 'var(--text)', width: 1.5 }
@@ -741,7 +745,7 @@ async function load() {
       json('/api/mix?h=' + H).catch(() => null),
       json('/api/sun?h=' + H).catch(() => null)
     ]);
-    NOW = n; SER = s; DAY = d; MIX = m; SUN = u;
+    NOW = n; SER = s; DAY = d; MIX = m; SUN = u; MIX_ERR = m === null; SUN_ERR = u === null;
     render();
   } catch (e) {
     const last = NOW && NOW.ts ? ' Ultimo dato ' + clock(NOW.ts) + '.' : '';
