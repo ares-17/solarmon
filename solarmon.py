@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """solarmon: inverter PI30 (hidraw) -> SQLite + dashboard + dati grezzi JSON + bot Telegram (letture e scritture protette).
 Solo libreria standard (paho-mqtt solo se MQTT_HOST e' impostato)."""
-import collections, hmac, json, logging, os, secrets, select, signal, sqlite3, sys, threading, time, urllib.parse, urllib.request
+import calendar, collections, datetime, hmac, json, logging, math, os, secrets, select, signal, sqlite3, sys, threading, time, urllib.parse, urllib.request
 from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -34,6 +34,89 @@ LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 log = logging.getLogger("solarmon")
 
 MODES = {"P": "Accensione", "S": "Standby", "L": "Rete", "B": "Batteria", "F": "FAULT", "H": "Risparmio"}
+
+# Capoluoghi di provincia: coordinate approssimate al km. La posizione serve solo ad
+# alba/tramonto, quindi l'errore e' irrilevante; il comune scritto dall'utente e' solo
+# un'etichetta, le coordinate sono quelle del capoluogo.
+CAPITALS = {
+    "AG": ("Agrigento", 37.311, 13.576), "AL": ("Alessandria", 44.913, 8.615),
+    "AN": ("Ancona", 43.615, 13.518), "AO": ("Aosta", 45.737, 7.320),
+    "AP": ("Ascoli Piceno", 42.854, 13.575), "AQ": ("L'Aquila", 42.351, 13.398),
+    "AR": ("Arezzo", 43.463, 11.880), "AT": ("Asti", 44.900, 8.206),
+    "AV": ("Avellino", 40.914, 14.791), "BA": ("Bari", 41.117, 16.872),
+    "BG": ("Bergamo", 45.698, 9.677), "BI": ("Biella", 45.566, 8.053),
+    "BL": ("Belluno", 46.142, 12.216), "BN": ("Benevento", 41.130, 14.778),
+    "BO": ("Bologna", 44.494, 11.343), "BR": ("Brindisi", 40.632, 17.941),
+    "BS": ("Brescia", 45.541, 10.211), "BT": ("Barletta", 41.320, 16.282),
+    "BZ": ("Bolzano", 46.498, 11.355), "CA": ("Cagliari", 39.223, 9.121),
+    "CB": ("Campobasso", 41.560, 14.662), "CE": ("Caserta", 41.073, 14.332),
+    "CH": ("Chieti", 42.351, 14.167), "CL": ("Caltanissetta", 37.490, 14.062),
+    "CN": ("Cuneo", 44.384, 7.542), "CO": ("Como", 45.808, 9.085),
+    "CR": ("Cremona", 45.133, 10.022), "CS": ("Cosenza", 39.298, 16.254),
+    "CT": ("Catania", 37.502, 15.087), "CZ": ("Catanzaro", 38.909, 16.587),
+    "EN": ("Enna", 37.567, 14.279), "FC": ("Forlì", 44.222, 12.041),
+    "FE": ("Ferrara", 44.838, 11.619), "FG": ("Foggia", 41.462, 15.544),
+    "FI": ("Firenze", 43.769, 11.256), "FM": ("Fermo", 43.160, 13.718),
+    "FR": ("Frosinone", 41.640, 13.342), "GE": ("Genova", 44.405, 8.946),
+    "GO": ("Gorizia", 45.941, 13.622), "GR": ("Grosseto", 42.759, 11.112),
+    "IM": ("Imperia", 43.889, 8.028), "IS": ("Isernia", 41.596, 14.233),
+    "KR": ("Crotone", 39.080, 17.127), "LC": ("Lecco", 45.856, 9.397),
+    "LE": ("Lecce", 40.351, 18.175), "LI": ("Livorno", 43.548, 10.310),
+    "LO": ("Lodi", 45.314, 9.503), "LT": ("Latina", 41.467, 12.904),
+    "LU": ("Lucca", 43.843, 10.505), "MB": ("Monza", 45.584, 9.274),
+    "MC": ("Macerata", 43.300, 13.453), "ME": ("Messina", 38.193, 15.554),
+    "MI": ("Milano", 45.464, 9.190), "MN": ("Mantova", 45.156, 10.791),
+    "MO": ("Modena", 44.647, 10.925), "MS": ("Massa", 44.035, 10.139),
+    "MT": ("Matera", 40.666, 16.604), "NA": ("Napoli", 40.852, 14.268),
+    "NO": ("Novara", 45.446, 8.622), "NU": ("Nuoro", 40.321, 9.330),
+    "OR": ("Oristano", 39.906, 8.588), "PA": ("Palermo", 38.116, 13.361),
+    "PC": ("Piacenza", 45.052, 9.693), "PD": ("Padova", 45.407, 11.876),
+    "PE": ("Pescara", 42.461, 14.216), "PG": ("Perugia", 43.110, 12.390),
+    "PI": ("Pisa", 43.716, 10.396), "PN": ("Pordenone", 45.956, 12.661),
+    "PO": ("Prato", 43.881, 11.102), "PR": ("Parma", 44.801, 10.328),
+    "PT": ("Pistoia", 43.933, 10.917), "PU": ("Pesaro", 43.910, 12.913),
+    "PV": ("Pavia", 45.185, 9.155), "PZ": ("Potenza", 40.640, 15.806),
+    "RA": ("Ravenna", 44.418, 12.203), "RC": ("Reggio Calabria", 38.111, 15.647),
+    "RE": ("Reggio Emilia", 44.698, 10.631), "RG": ("Ragusa", 36.926, 14.725),
+    "RI": ("Rieti", 42.404, 12.856), "RM": ("Roma", 41.893, 12.483),
+    "RN": ("Rimini", 44.067, 12.569), "RO": ("Rovigo", 45.070, 11.790),
+    "SA": ("Salerno", 40.682, 14.768), "SI": ("Siena", 43.318, 11.331),
+    "SO": ("Sondrio", 46.169, 9.874), "SP": ("La Spezia", 44.103, 9.824),
+    "SR": ("Siracusa", 37.075, 15.286), "SS": ("Sassari", 40.726, 8.559),
+    "SU": ("Sud Sardegna", 39.167, 8.522), "SV": ("Savona", 44.307, 8.481),
+    "TA": ("Taranto", 40.464, 17.247), "TE": ("Teramo", 42.659, 13.704),
+    "TN": ("Trento", 46.070, 11.121), "TO": ("Torino", 45.071, 7.686),
+    "TP": ("Trapani", 38.017, 12.537), "TR": ("Terni", 42.563, 12.642),
+    "TS": ("Trieste", 45.650, 13.770), "TV": ("Treviso", 45.666, 12.243),
+    "UD": ("Udine", 46.071, 13.235), "VA": ("Varese", 45.820, 8.825),
+    "VB": ("Verbania", 45.921, 8.552), "VC": ("Vercelli", 45.320, 8.418),
+    "VE": ("Venezia", 45.440, 12.316), "VI": ("Vicenza", 45.545, 11.535),
+    "VR": ("Verona", 45.438, 10.992), "VS": ("Medio Campidano", 39.562, 8.900),
+    "VT": ("Viterbo", 42.420, 12.107), "VV": ("Vibo Valentia", 38.676, 16.100),
+}
+
+
+def solar_site():
+    """Coordinate per alba/tramonto: prima LAT/LON esplicite, poi il capoluogo di PLACE."""
+    if SOLAR_LAT and SOLAR_LON:
+        try:
+            lat, lon = float(SOLAR_LAT.replace(",", ".")), float(SOLAR_LON.replace(",", "."))
+            if -90 <= lat <= 90 and -180 <= lon <= 180:
+                return {"place": SOLAR_PLACE or "coordinate", "lat": lat, "lon": lon}
+            log.warning("SOLAR_LAT/SOLAR_LON fuori range: ignorate")
+        except ValueError:
+            log.warning("SOLAR_LAT/SOLAR_LON non numeriche: ignorate")
+    place = SOLAR_PLACE.strip()
+    if not place:
+        return None
+    code = place.split(",")[-1].strip().upper()
+    if code not in CAPITALS:
+        code = next((k for k, v in CAPITALS.items() if v[0].casefold() == place.casefold()), "")
+    hit = CAPITALS.get(code)
+    if not hit:
+        log.warning("SOLAR_PLACE non riconosciuto: %s", place)
+        return None
+    return {"place": place, "lat": hit[1], "lon": hit[2]}
 # QPIWS, indice del bit -> (descrizione, grave?). Mappa da specifica Voltronic: verificare con un allarme reale.
 WS = {1: ("Inverter fault", 1), 2: ("Bus over", 1), 3: ("Bus under", 1), 4: ("Bus soft fail", 1),
       5: ("Mancanza rete", 0), 6: ("Corto circuito PV", 0), 7: ("Tensione di uscita troppo bassa (display F58?)", 1),
@@ -65,6 +148,71 @@ SETTINGS = {
 LEGEND = {"unita": "pv_w/out_w/out_va W, *_v V, chg_a/dis_a A, temp_c C, *_pct %", "mode": MODES,
           "ws": "32 caratteri QPIWS: tutti 0 = nessun allarme", "pv_w": "potenza FV (limitata dal carico se la batteria e' piena)",
           "chg_a/dis_a": "corrente in carica/scarica della batteria", "scc_on": "1 = MPPT sta caricando"}
+
+
+SUN_CACHE = {}
+
+
+def sun_day(day, lat, lon):
+    """Alba e tramonto (epoch UTC) per una data, algoritmo NOAA semplificato."""
+    key = (day.isoformat(), round(lat, 3), round(lon, 3))
+    if key in SUN_CACHE:
+        return SUN_CACHE[key]
+    n = day.timetuple().tm_yday
+    g = 2 * math.pi / 365.0 * (n - 1 + 0.5)
+    eq = 229.18 * (0.000075 + 0.001868 * math.cos(g) - 0.032077 * math.sin(g)
+                   - 0.014615 * math.cos(2 * g) - 0.040849 * math.sin(2 * g))
+    dec = (0.006918 - 0.399912 * math.cos(g) + 0.070257 * math.sin(g)
+           - 0.006758 * math.cos(2 * g) + 0.000907 * math.sin(2 * g)
+           - 0.002697 * math.cos(3 * g) + 0.00148 * math.sin(3 * g))
+    cos_ha = (math.cos(math.radians(90.833)) / (math.cos(math.radians(lat)) * math.cos(dec))
+              - math.tan(math.radians(lat)) * math.tan(dec))
+    out = None
+    if -1 <= cos_ha <= 1:
+        ha = math.degrees(math.acos(cos_ha))
+        base = calendar.timegm(day.timetuple())
+        rise = base + round((720 - 4 * (lon + ha) - eq) * 60)
+        sunset = base + round((720 - 4 * (lon - ha) - eq) * 60)
+        if sunset > rise:
+            out = (rise, sunset)
+    if len(SUN_CACHE) > 800:
+        SUN_CACHE.clear()
+    SUN_CACHE[key] = out
+    return out
+
+
+def sun_payload(h):
+    site = solar_site()
+    if not site:
+        return {"configured": False, "days": []}
+    first = datetime.date(*time.gmtime(time.time() - h * 3600)[:3])
+    last = datetime.date(*time.gmtime(time.time())[:3])
+    days, day = [], first
+    while day <= last:
+        t = sun_day(day, site["lat"], site["lon"])
+        if t:
+            days.append({"date": day.isoformat(), "rise": t[0], "set": t[1]})
+        day += datetime.timedelta(days=1)
+    return {"configured": True, "place": site["place"], "lat": site["lat"],
+            "lon": site["lon"], "days": days}
+
+
+def mix_payload(h):
+    """Energia consumata nel periodo, divisa per fonte. Le ricariche non entrano."""
+    since = time.time() - h * 3600
+    with closing(connect()) as con:
+        row = con.execute(
+            "SELECT COALESCE(SUM(CASE WHEN mode<>'L' THEN MIN(COALESCE(pv_w,0), COALESCE(out_w,0)) ELSE 0 END),0),"
+            " COALESCE(SUM(CASE WHEN mode<>'L' THEN MAX(0, COALESCE(out_w,0)-COALESCE(pv_w,0)) ELSE 0 END),0),"
+            " COALESCE(SUM(CASE WHEN mode='L' THEN COALESCE(out_w,0) ELSE 0 END),0),"
+            " COALESCE(SUM(COALESCE(out_w,0)),0), COUNT(*), MIN(ts), MAX(ts)"
+            " FROM samples WHERE ts>?", (since,)).fetchone()
+    solar, batt, grid, _load, n, first, last = row
+    k = STORE_INTERVAL / 3600000.0
+    parts = [round(x * k, 3) for x in (solar, batt, grid)]
+    return {"h": h, "solar_kwh": parts[0], "batt_kwh": parts[1],
+            "grid_kwh": parts[2], "load_kwh": round(sum(parts), 3),
+            "samples": n, "from": first, "to": last}
 
 
 def crc16(data):  # CRC-XMODEM con la correzione PI30 (0x28, 0x0D, 0x0A -> +1)
@@ -270,6 +418,10 @@ class Handler(BaseHTTPRequestHandler):
                                        "WHERE ts>? GROUP BY 1 ORDER BY 1" % (b, b), (time.time() - h * 3600,)).fetchall()
                 cols = list(zip(*rows)) if rows else [[]] * 5
                 self.out(dict(zip(["ts", "pv_w", "out_w", "batt_v", "pv_v"], cols)))
+            elif u.path == "/api/sun":
+                self.out(sun_payload(qint(q, "h", 24, 1, 24 * 365)))
+            elif u.path == "/api/mix":
+                self.out(mix_payload(qint(q, "h", 24, 1, 24 * 365)))
             elif u.path == "/api/daily":
                 with closing(connect()) as con:
                     rows = con.execute("SELECT min(ts), sum(pv_w)*%d/3600000.0 FROM samples WHERE ts>? "

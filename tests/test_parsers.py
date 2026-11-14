@@ -8,6 +8,7 @@ import importlib.util
 import json
 import logging
 import threading
+import time
 import urllib.error
 import urllib.request
 from contextlib import closing
@@ -217,3 +218,117 @@ def test_prepare_rejects_cutoff_above_back_to_grid(solarmon):
 
 def test_prepare_maps_output_priority(solarmon):
     assert solarmon.prepare("uscita", "sbu", CFG) == ("POP02", "Priorita' uscita")
+
+
+# --- posizione solare -------------------------------------------------------
+
+
+def test_solar_site_reads_explicit_coordinates(solarmon, monkeypatch):
+    monkeypatch.setattr(solarmon, "SOLAR_LAT", "41,90")
+    monkeypatch.setattr(solarmon, "SOLAR_LON", "12,49")
+    monkeypatch.setattr(solarmon, "SOLAR_PLACE", "")
+    site = solarmon.solar_site()
+    assert site == {"place": "coordinate", "lat": 41.9, "lon": 12.49}
+
+
+def test_solar_site_resolves_province_capital(solarmon, monkeypatch):
+    monkeypatch.setattr(solarmon, "SOLAR_LAT", "")
+    monkeypatch.setattr(solarmon, "SOLAR_LON", "")
+    monkeypatch.setattr(solarmon, "SOLAR_PLACE", "roma, rm")
+    site = solarmon.solar_site()
+    assert site["place"] == "roma, rm"
+    assert 41.5 < site["lat"] < 42.3
+    assert 12.0 < site["lon"] < 12.9
+
+
+def test_solar_site_returns_none_when_unset(solarmon, monkeypatch):
+    monkeypatch.setattr(solarmon, "SOLAR_LAT", "")
+    monkeypatch.setattr(solarmon, "SOLAR_LON", "")
+    monkeypatch.setattr(solarmon, "SOLAR_PLACE", "posto-inventato, ZZ")
+    assert solarmon.solar_site() is None
+
+
+def test_sun_endpoint_returns_local_daylight(db, server, monkeypatch):
+    monkeypatch.setattr(db, "SOLAR_LAT", "41.9")
+    monkeypatch.setattr(db, "SOLAR_LON", "12.5")
+    monkeypatch.setattr(db, "SOLAR_PLACE", "Roma, RM")
+    with closing(urllib.request.urlopen(server + "/api/sun?h=24", timeout=5)) as response:
+        body = json.load(response)
+    assert body["configured"] is True
+    assert body["days"]
+    for day in body["days"]:
+        assert day["rise"] < day["set"]
+        assert 8 * 3600 <= day["set"] - day["rise"] <= 16 * 3600
+
+
+def test_sun_endpoint_without_position(db, server, monkeypatch):
+    monkeypatch.setattr(db, "SOLAR_LAT", "")
+    monkeypatch.setattr(db, "SOLAR_LON", "")
+    monkeypatch.setattr(db, "SOLAR_PLACE", "")
+    with closing(urllib.request.urlopen(server + "/api/sun?h=24", timeout=5)) as response:
+        body = json.load(response)
+    assert body == {"configured": False, "days": []}
+
+
+def test_mix_splits_load_between_solar_battery_and_grid(db, server, monkeypatch):
+    monkeypatch.setattr(db, "STORE_INTERVAL", 3600)  # 100 W per un'ora = 0,1 kWh
+    now = int(time.time())
+    con = db.connect()
+    rows = [
+        (now - 120, 600, 400, "B"),  # FV diretto 400, batteria 0
+        (now - 60, 200, 500, "B"),   # FV diretto 200, batteria 300
+        (now - 30, 0, 500, "L"),     # bypass: tutto il carico e' rete
+    ]
+    for ts, pv, out, mode in rows:
+        con.execute("INSERT INTO samples(ts,pv_w,out_w,mode,grid_v,batt_v,chg_a,dis_a)"
+                    " VALUES(?,?,?,?,?,?,?,?)", (ts, pv, out, mode, 230, 52, 0, 0))
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/mix?h=1", timeout=5)) as response:
+        body = json.load(response)
+    assert body["solar_kwh"] == 0.6
+    assert body["batt_kwh"] == 0.3
+    assert body["grid_kwh"] == 0.5
+    assert body["load_kwh"] == 1.4
+    assert body["samples"] == 3
+
+
+def test_mix_without_samples_returns_zeroes(db, server):
+    with closing(urllib.request.urlopen(server + "/api/mix?h=24", timeout=5)) as response:
+        body = json.load(response)
+    assert body["load_kwh"] == 0 and body["samples"] == 0
+
+
+def test_mix_parts_always_sum_to_load(db, server, monkeypatch):
+    monkeypatch.setattr(db, "STORE_INTERVAL", 360)  # 3335 W per 6 min = 0,3335 kWh
+    now = int(time.time())
+    con = db.connect()
+    rows = [
+        (now - 30, 3335, 3335, "B"),  # FV diretto
+        (now - 20, 0, 3335, "B"),     # batteria
+        (now - 10, 0, 3335, "L"),     # rete
+    ]
+    for ts, pv, out, mode in rows:
+        con.execute("INSERT INTO samples(ts,pv_w,out_w,mode,grid_v,batt_v,chg_a,dis_a)"
+                    " VALUES(?,?,?,?,?,?,?,?)", (ts, pv, out, mode, 230, 52, 0, 0))
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/mix?h=1", timeout=5)) as response:
+        body = json.load(response)
+    parts = body["solar_kwh"] + body["batt_kwh"] + body["grid_kwh"]
+    assert parts == pytest.approx(body["load_kwh"], abs=1e-6)
+
+
+def test_mix_unknown_mode_is_not_bypass(db, server, monkeypatch):
+    monkeypatch.setattr(db, "STORE_INTERVAL", 3600)
+    now = int(time.time())
+    con = db.connect()
+    con.execute("INSERT INTO samples(ts,pv_w,out_w,mode,grid_v,batt_v,chg_a,dis_a)"
+                " VALUES(?,?,?,?,?,?,?,?)", (now - 30, 200, 500, "?", 230, 52, 0, 0))
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/mix?h=1", timeout=5)) as response:
+        body = json.load(response)
+    assert body["solar_kwh"] == 0.2
+    assert body["batt_kwh"] == 0.3
+    assert body["grid_kwh"] == 0
