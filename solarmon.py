@@ -197,6 +197,23 @@ def sun_payload(h):
             "lon": site["lon"], "days": days}
 
 
+def mix_payload(h):
+    """Energia consumata nel periodo, divisa per fonte. Le ricariche non entrano."""
+    since = time.time() - h * 3600
+    with closing(connect()) as con:
+        row = con.execute(
+            "SELECT COALESCE(SUM(CASE WHEN mode<>'L' THEN MIN(COALESCE(pv_w,0), COALESCE(out_w,0)) ELSE 0 END),0),"
+            " COALESCE(SUM(CASE WHEN mode<>'L' THEN MAX(0, COALESCE(out_w,0)-COALESCE(pv_w,0)) ELSE 0 END),0),"
+            " COALESCE(SUM(CASE WHEN mode='L' THEN COALESCE(out_w,0) ELSE 0 END),0),"
+            " COALESCE(SUM(COALESCE(out_w,0)),0), COUNT(*), MIN(ts), MAX(ts)"
+            " FROM samples WHERE ts>?", (since,)).fetchone()
+    solar, batt, grid, load, n, first, last = row
+    k = STORE_INTERVAL / 3600000.0
+    return {"h": h, "solar_kwh": round(solar * k, 3), "batt_kwh": round(batt * k, 3),
+            "grid_kwh": round(grid * k, 3), "load_kwh": round(load * k, 3),
+            "samples": n, "from": first, "to": last}
+
+
 def crc16(data):  # CRC-XMODEM con la correzione PI30 (0x28, 0x0D, 0x0A -> +1)
     crc = 0
     for b in data:
@@ -402,6 +419,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.out(dict(zip(["ts", "pv_w", "out_w", "batt_v", "pv_v"], cols)))
             elif u.path == "/api/sun":
                 self.out(sun_payload(qint(q, "h", 24, 1, 24 * 365)))
+            elif u.path == "/api/mix":
+                self.out(mix_payload(qint(q, "h", 24, 1, 24 * 365)))
             elif u.path == "/api/daily":
                 with closing(connect()) as con:
                     rows = con.execute("SELECT min(ts), sum(pv_w)*%d/3600000.0 FROM samples WHERE ts>? "

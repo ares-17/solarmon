@@ -8,6 +8,7 @@ import importlib.util
 import json
 import logging
 import threading
+import time
 import urllib.error
 import urllib.request
 from contextlib import closing
@@ -267,3 +268,32 @@ def test_sun_endpoint_without_position(db, server, monkeypatch):
     with closing(urllib.request.urlopen(server + "/api/sun?h=24", timeout=5)) as response:
         body = json.load(response)
     assert body == {"configured": False, "days": []}
+
+
+def test_mix_splits_load_between_solar_battery_and_grid(db, server, monkeypatch):
+    monkeypatch.setattr(db, "STORE_INTERVAL", 3600)  # 100 W per un'ora = 0,1 kWh
+    now = int(time.time())
+    con = db.connect()
+    rows = [
+        (now - 120, 600, 400, "B"),  # FV diretto 400, batteria 0
+        (now - 60, 200, 500, "B"),   # FV diretto 200, batteria 300
+        (now - 30, 0, 500, "L"),     # bypass: tutto il carico e' rete
+    ]
+    for ts, pv, out, mode in rows:
+        con.execute("INSERT INTO samples(ts,pv_w,out_w,mode,grid_v,batt_v,chg_a,dis_a)"
+                    " VALUES(?,?,?,?,?,?,?,?)", (ts, pv, out, mode, 230, 52, 0, 0))
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/mix?h=1", timeout=5)) as response:
+        body = json.load(response)
+    assert body["solar_kwh"] == 0.6
+    assert body["batt_kwh"] == 0.3
+    assert body["grid_kwh"] == 0.5
+    assert body["load_kwh"] == 1.4
+    assert body["samples"] == 3
+
+
+def test_mix_without_samples_returns_zeroes(db, server):
+    with closing(urllib.request.urlopen(server + "/api/mix?h=24", timeout=5)) as response:
+        body = json.load(response)
+    assert body["load_kwh"] == 0 and body["samples"] == 0
