@@ -28,6 +28,7 @@ INTERVAL, STORE_INTERVAL, RAW_KEEP = max(3, int(E("INTERVAL", "10"))), int(E("ST
 TG_TOKEN, TG_CHAT, MQTT_HOST = E("TG_TOKEN", ""), E("TG_CHAT", ""), E("MQTT_HOST", "")
 TG_ADMIN = int(E("TG_ADMIN_ID") or TG_CHAT or 0)
 ALLOW_WRITE = E("ALLOW_WRITE", "0") == "1"
+GRID_CONFIRM, GRID_MIN_V = 3, 90.0
 BATT_LOW, REPEAT = float(E("BATT_LOW_V", "47")), int(E("ALERT_REPEAT_MIN", "60")) * 60
 SOLAR_PLACE, SOLAR_LAT, SOLAR_LON = E("SOLAR_PLACE", ""), E("SOLAR_LAT", ""), E("SOLAR_LON", "")
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
@@ -303,12 +304,134 @@ def notify(text):
     log.warning("ALERT %s", text); tg_send(text)
 
 
-def alert(key, on, text_on, text_off):
-    now = time.time()
-    if on and (key not in active or now - active[key] >= REPEAT):
-        active[key] = now; notify(text_on)
+def alert(key, on, text_on, text_off=""):
+    if on and key not in active:
+        active[key] = True
+        if text_on:
+            notify(text_on)
     elif not on and key in active:
-        del active[key]; notify(text_off)
+        del active[key]
+        if text_off:
+            notify(text_off)
+
+
+def it_num(v, d=0):
+    return f"{v:.{d}f}".replace(".", ",")
+
+
+def _finite(v):
+    if v is None:
+        return False
+    try:
+        f = float(v)
+        return math.isfinite(f)
+    except (TypeError, ValueError):
+        return False
+
+
+def grid_on(gs, mode):
+    return mode == "L" and _finite(gs.get("grid_v")) and float(gs["grid_v"]) > GRID_MIN_V
+
+
+def grid_switch_text(new_on_grid, gs, mode):
+    has_v = _finite(gs.get("batt_v"))
+    has_pct = _finite(gs.get("batt_pct"))
+    if new_on_grid:
+        if has_pct and has_v:
+            return f"Passato alla rete: batteria al {int(round(float(gs['batt_pct'])))}% ({it_num(float(gs['batt_v']), 1)} V)."
+        elif has_pct:
+            return f"Passato alla rete: batteria al {int(round(float(gs['batt_pct'])))}%."
+        elif has_v:
+            return f"Passato alla rete: batteria a {it_num(float(gs['batt_v']), 1)} V."
+        else:
+            return "Passato alla rete."
+    else:
+        if mode != "B":
+            return None
+        if has_v and has_pct:
+            return f"Tornato alla batteria: {it_num(float(gs['batt_v']), 1)} V ({int(round(float(gs['batt_pct'])))}%)."
+        elif has_v:
+            return f"Tornato alla batteria: {it_num(float(gs['batt_v']), 1)} V."
+        elif has_pct:
+            return f"Tornato alla batteria: {int(round(float(gs['batt_pct'])))}%."
+        else:
+            return "Tornato alla batteria."
+
+
+def alarm_groups(ws, mode):
+    ws = ws or ""
+    severe, warnings = [], []
+    has_inv_fault = False
+    for i in sorted(WS):
+        name, is_sev = WS[i]
+        if ws[i:i + 1] == "1":
+            if name == "Inverter fault":
+                has_inv_fault = True
+            if is_sev:
+                severe.append(name)
+            else:
+                warnings.append(name)
+    if mode == "F" and not has_inv_fault:
+        severe.insert(0, "Modalità FAULT")
+    return severe, warnings
+
+
+def alarm_text(prev, groups):
+    severe, warnings = groups
+    current = frozenset(severe + warnings)
+    if prev is not None and current == prev:
+        return None
+    cleared = sorted(prev - current) if prev is not None else []
+    if not current and not cleared:
+        return None
+    if not current:
+        return "Allarmi rientrati: " + "; ".join(cleared) + "."
+    lines = ["Allarmi inverter"]
+    if severe:
+        lines.append("Guasti: " + "; ".join(severe))
+    if warnings:
+        lines.append("Avvisi: " + "; ".join(warnings))
+    if cleared:
+        lines.append("Rientrati: " + "; ".join(cleared) + ".")
+    return "\n".join(lines)
+
+
+class Notifier:
+    def __init__(self, send=None):
+        self.send = send or notify
+        self.prev_grid = None
+        self.grid_candidate = None
+        self.grid_count = 0
+        self.prev_alarms = None
+
+    def update(self, gs, mode, ws):
+        on_grid = grid_on(gs, mode)
+        if self.prev_grid is None:
+            self.prev_grid = on_grid
+        else:
+            if on_grid != self.prev_grid:
+                if on_grid == self.grid_candidate:
+                    self.grid_count += 1
+                else:
+                    self.grid_candidate = on_grid
+                    self.grid_count = 1
+                if self.grid_count >= GRID_CONFIRM:
+                    msg = grid_switch_text(on_grid, gs, mode)
+                    self.prev_grid = on_grid
+                    self.grid_candidate = None
+                    self.grid_count = 0
+                    if msg:
+                        self.send(msg)
+            else:
+                self.grid_candidate = None
+                self.grid_count = 0
+
+        groups = alarm_groups(ws, mode)
+        msg = alarm_text(self.prev_alarms, groups)
+        self.prev_alarms = frozenset(groups[0] + groups[1])
+        if msg:
+            self.send(msg)
+
 
 
 # ---- stato, storage, buffer di letture fini

@@ -332,3 +332,126 @@ def test_mix_unknown_mode_is_not_bypass(db, server, monkeypatch):
     assert body["solar_kwh"] == 0.2
     assert body["batt_kwh"] == 0.3
     assert body["grid_kwh"] == 0
+
+
+# --- notifiche --------------------------------------------------------------
+
+
+def _gs(**kw):
+    base = {"pv_w": 0, "out_w": 0, "batt_v": 52.0, "batt_pct": 80, "grid_v": 0,
+            "chg_a": 0, "dis_a": 0, "ac_chg": 0}
+    base.update(kw)
+    return base
+
+
+def test_grid_on_requires_line_mode_and_ac(solarmon):
+    assert solarmon.grid_on(_gs(grid_v=230), "L") is True
+    assert solarmon.grid_on(_gs(grid_v=0), "L") is False
+    assert solarmon.grid_on(_gs(grid_v=230), "B") is False
+
+
+def test_grid_switch_text_to_grid(solarmon):
+    assert solarmon.grid_switch_text(True, _gs(batt_v=46.2, batt_pct=18), "L") == \
+        "Passato alla rete: batteria al 18% (46,2 V)."
+    assert solarmon.grid_switch_text(True, _gs(batt_v=None, batt_pct=18), "L") == \
+        "Passato alla rete: batteria al 18%."
+    assert solarmon.grid_switch_text(True, _gs(batt_v=None, batt_pct=None), "L") == \
+        "Passato alla rete."
+
+
+def test_grid_switch_text_return_only_for_battery_mode(solarmon):
+    assert solarmon.grid_switch_text(False, _gs(batt_v=52.1, batt_pct=63), "B") == \
+        "Tornato alla batteria: 52,1 V (63%)."
+    assert solarmon.grid_switch_text(False, _gs(), "S") is None
+
+
+def test_alarm_groups_splits_severe_and_warnings(solarmon):
+    ws = "0" * 32
+    ws = ws[:16] + "1" + ws[17:]  # bit 16: sovraccarico (grave)
+    ws = ws[:5] + "1" + ws[6:]    # bit 5: mancanza rete (avviso)
+    severe, warnings = solarmon.alarm_groups(ws, "B")
+    assert severe == ["Sovraccarico"]
+    assert warnings == ["Mancanza rete"]
+
+
+def test_alarm_groups_adds_mode_fault_without_bit_one(solarmon):
+    severe, warnings = solarmon.alarm_groups("0" * 32, "F")
+    assert severe == ["Modalità FAULT"]
+    assert warnings == []
+    severe, _ = solarmon.alarm_groups("0" + "1" + "0" * 30, "F")
+    assert severe == ["Inverter fault"]
+
+
+def test_alarm_text_groups_and_reports_cleared(solarmon):
+    assert solarmon.alarm_text(
+        frozenset({"Mancanza rete"}), (["Sovraccarico"], ["Mancanza rete"])) == \
+        "Allarmi inverter\nGuasti: Sovraccarico\nAvvisi: Mancanza rete"
+    assert solarmon.alarm_text(
+        frozenset({"Mancanza rete", "Sovraccarico"}), (["Sovraccarico"], [])) == \
+        "Allarmi inverter\nGuasti: Sovraccarico\nRientrati: Mancanza rete."
+    assert solarmon.alarm_text(frozenset({"Sovraccarico"}), ([], [])) == \
+        "Allarmi rientrati: Sovraccarico."
+    assert solarmon.alarm_text(frozenset({"Sovraccarico"}), (["Sovraccarico"], [])) is None
+    assert solarmon.alarm_text(None, ([], [])) is None
+
+
+def test_alert_does_not_repeat_while_active(solarmon, monkeypatch):
+    sent = []
+    monkeypatch.setattr(solarmon, "notify", sent.append)
+    solarmon.active.clear()
+    solarmon.alert("x", True, "on", "off")
+    solarmon.alert("x", True, "on", "off")
+    solarmon.alert("x", False, "", "off")
+    solarmon.alert("x", False, "", "off")
+    assert sent == ["on", "off"]
+
+
+def _notifier(solarmon):
+    sent = []
+    return solarmon.Notifier(sent.append), sent
+
+
+def test_notifier_confirms_grid_transition_after_three_readings(solarmon):
+    n, sent = _notifier(solarmon)
+    batt = _gs(pv_w=900, out_w=500)
+    grid = _gs(grid_v=230, batt_v=46.2, batt_pct=18)
+    n.update(batt, "B", "0" * 32)
+    assert sent == []
+    n.update(grid, "L", "0" * 32)
+    n.update(grid, "L", "0" * 32)
+    assert sent == []
+    n.update(grid, "L", "0" * 32)
+    assert sent == ["Passato alla rete: batteria al 18% (46,2 V)."]
+    n.update(grid, "L", "0" * 32)
+    assert sent == ["Passato alla rete: batteria al 18% (46,2 V)."]
+
+
+def test_notifier_ignores_flapping(solarmon):
+    n, sent = _notifier(solarmon)
+    batt, grid = _gs(), _gs(grid_v=230)
+    n.update(batt, "B", "0" * 32)
+    for _ in range(3):
+        n.update(grid, "L", "0" * 32)
+        n.update(batt, "B", "0" * 32)
+    assert sent == []
+
+
+def test_notifier_sends_grouped_alarms_without_repeats(solarmon):
+    n, sent = _notifier(solarmon)
+    clean = "0" * 32
+    overload = clean[:16] + "1" + clean[17:]
+    n.update(_gs(), "B", clean)
+    n.update(_gs(), "B", overload)
+    n.update(_gs(), "B", overload)
+    assert sent == ["Allarmi inverter\nGuasti: Sovraccarico"]
+    n.update(_gs(), "B", clean)
+    assert sent == ["Allarmi inverter\nGuasti: Sovraccarico",
+                    "Allarmi rientrati: Sovraccarico."]
+
+
+def test_notifier_sends_alarms_active_at_startup(solarmon):
+    n, sent = _notifier(solarmon)
+    overload = "0" * 16 + "1" + "0" * 15
+    n.update(_gs(), "B", overload)
+    assert sent == ["Allarmi inverter\nGuasti: Sovraccarico"]
+
