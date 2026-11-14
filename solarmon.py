@@ -150,6 +150,53 @@ LEGEND = {"unita": "pv_w/out_w/out_va W, *_v V, chg_a/dis_a A, temp_c C, *_pct %
           "chg_a/dis_a": "corrente in carica/scarica della batteria", "scc_on": "1 = MPPT sta caricando"}
 
 
+SUN_CACHE = {}
+
+
+def sun_day(day, lat, lon):
+    """Alba e tramonto (epoch UTC) per una data, algoritmo NOAA semplificato."""
+    key = (day.isoformat(), round(lat, 3), round(lon, 3))
+    if key in SUN_CACHE:
+        return SUN_CACHE[key]
+    n = day.timetuple().tm_yday
+    g = 2 * math.pi / 365.0 * (n - 1 + 0.5)
+    eq = 229.18 * (0.000075 + 0.001868 * math.cos(g) - 0.032077 * math.sin(g)
+                   - 0.014615 * math.cos(2 * g) - 0.040849 * math.sin(2 * g))
+    dec = (0.006918 - 0.399912 * math.cos(g) + 0.070257 * math.sin(g)
+           - 0.006758 * math.cos(2 * g) + 0.000907 * math.sin(2 * g)
+           - 0.002697 * math.cos(3 * g) + 0.00148 * math.sin(3 * g))
+    cos_ha = (math.cos(math.radians(90.833)) / (math.cos(math.radians(lat)) * math.cos(dec))
+              - math.tan(math.radians(lat)) * math.tan(dec))
+    out = None
+    if -1 <= cos_ha <= 1:
+        ha = math.degrees(math.acos(cos_ha))
+        base = calendar.timegm(day.timetuple())
+        rise = base + round((720 - 4 * (lon + ha) - eq) * 60)
+        sunset = base + round((720 - 4 * (lon - ha) - eq) * 60)
+        if sunset > rise:
+            out = (rise, sunset)
+    if len(SUN_CACHE) > 800:
+        SUN_CACHE.clear()
+    SUN_CACHE[key] = out
+    return out
+
+
+def sun_payload(h):
+    site = solar_site()
+    if not site:
+        return {"configured": False, "days": []}
+    first = datetime.date(*time.gmtime(time.time() - h * 3600)[:3])
+    last = datetime.date(*time.gmtime(time.time())[:3])
+    days, day = [], first
+    while day <= last:
+        t = sun_day(day, site["lat"], site["lon"])
+        if t:
+            days.append({"date": day.isoformat(), "rise": t[0], "set": t[1]})
+        day += datetime.timedelta(days=1)
+    return {"configured": True, "place": site["place"], "lat": site["lat"],
+            "lon": site["lon"], "days": days}
+
+
 def crc16(data):  # CRC-XMODEM con la correzione PI30 (0x28, 0x0D, 0x0A -> +1)
     crc = 0
     for b in data:
@@ -353,6 +400,8 @@ class Handler(BaseHTTPRequestHandler):
                                        "WHERE ts>? GROUP BY 1 ORDER BY 1" % (b, b), (time.time() - h * 3600,)).fetchall()
                 cols = list(zip(*rows)) if rows else [[]] * 5
                 self.out(dict(zip(["ts", "pv_w", "out_w", "batt_v", "pv_v"], cols)))
+            elif u.path == "/api/sun":
+                self.out(sun_payload(qint(q, "h", 24, 1, 24 * 365)))
             elif u.path == "/api/daily":
                 with closing(connect()) as con:
                     rows = con.execute("SELECT min(ts), sum(pv_w)*%d/3600000.0 FROM samples WHERE ts>? "

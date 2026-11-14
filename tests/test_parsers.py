@@ -245,3 +245,25 @@ def test_solar_site_returns_none_when_unset(solarmon, monkeypatch):
     monkeypatch.setattr(solarmon, "SOLAR_LON", "")
     monkeypatch.setattr(solarmon, "SOLAR_PLACE", "posto-inventato, ZZ")
     assert solarmon.solar_site() is None
+
+
+def test_sun_endpoint_returns_local_daylight(db, server, monkeypatch):
+    monkeypatch.setattr(db, "SOLAR_LAT", "41.9")
+    monkeypatch.setattr(db, "SOLAR_LON", "12.5")
+    monkeypatch.setattr(db, "SOLAR_PLACE", "Roma, RM")
+    with closing(urllib.request.urlopen(server + "/api/sun?h=24", timeout=5)) as response:
+        body = json.load(response)
+    assert body["configured"] is True
+    assert body["days"]
+    for day in body["days"]:
+        assert day["rise"] < day["set"]
+        assert 8 * 3600 <= day["set"] - day["rise"] <= 16 * 3600
+
+
+def test_sun_endpoint_without_position(db, server, monkeypatch):
+    monkeypatch.setattr(db, "SOLAR_LAT", "")
+    monkeypatch.setattr(db, "SOLAR_LON", "")
+    monkeypatch.setattr(db, "SOLAR_PLACE", "")
+    with closing(urllib.request.urlopen(server + "/api/sun?h=24", timeout=5)) as response:
+        body = json.load(response)
+    assert body == {"configured": False, "days": []}
