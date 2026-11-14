@@ -58,6 +58,14 @@ a{color:inherit}
 h1{font-size:var(--fs-title);line-height:1.2;font-weight:600;letter-spacing:-.02em}
 .finding{margin-top:4px;color:var(--muted);font-size:14px;max-width:74ch}
 .finding b{color:var(--text);font-weight:600}
+.status{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.status-item{display:flex;align-items:baseline;gap:8px;padding:5px 11px;border:1px solid var(--border);border-radius:var(--r-ctl);background:var(--raised);min-width:0}
+.status-k{font-size:12px;color:var(--muted)}
+.status-v{display:inline-flex;align-items:center;gap:6px;font-size:20px;font-weight:600;letter-spacing:-.02em;white-space:nowrap}
+.status-v::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none}
+.status-item.good .status-v::before{background:var(--positive)}
+.status-item.warn .status-v::before{background:var(--warn-ink)}
+.status-item.bad .status-v::before{background:var(--negative)}
 .back{display:inline-block;font-size:13px;color:var(--muted);text-decoration:none;margin-bottom:4px}
 .back:hover{color:var(--text)}
 
@@ -154,6 +162,7 @@ figcaption{margin-top:6px;font-size:13px;color:var(--muted)}
 }
 @media (max-width:639px){
   :root{--pad:16px}
+  .status-v{font-size:18px}
   .bar{gap:8px}
   .scope{display:none}
   .wrap{padding-top:14px;padding-bottom:40px}
@@ -196,7 +205,16 @@ figcaption{margin-top:6px;font-size:13px;color:var(--muted)}
   <div class="title-row">
     <div class="title-main">
       <h1>Impianto</h1>
-      <p class="finding" id="finding">Lettura in corso…</p>
+      <div class="status" id="status" role="group" aria-label="Stato attuale">
+        <p class="status-item" id="status-source">
+          <span class="status-k">Adesso</span>
+          <span class="status-v" id="status-source-v">–</span>
+        </p>
+        <p class="status-item" id="status-fv">
+          <span class="status-k">FV</span>
+          <span class="status-v" id="status-fv-v">–</span>
+        </p>
+      </div>
     </div>
     <div class="seg" role="group" aria-label="Periodo dei grafici">
       <button type="button" data-h="24" aria-pressed="true">24 ore</button>
@@ -335,7 +353,7 @@ let H = 24, NOW = null, SER = null, DAY = null, MIX = null, SUN = null,
   MIX_ERR = false, SUN_ERR = false, busy = false, timer = 0;
 
 const fmt = (v, d = 0) => (v === null || v === undefined || !Number.isFinite(+v)) ? '–'
-  : new Intl.NumberFormat('it-IT', { minimumFractionDigits: d, maximumFractionDigits: d }).format(+v);
+  : new Intl.NumberFormat('it-IT', { useGrouping: true, minimumFractionDigits: d, maximumFractionDigits: d }).format(+v);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const clock = (ts) => new Date(ts * 1000).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
 const dayLbl = (ts) => new Date(ts * 1000).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' });
@@ -484,23 +502,39 @@ function barChart(svg, ts, values, opts = {}) {
 const battPower = (gs) => (Number(gs.chg_a) > 0.2 ? Number(gs.batt_v) * Number(gs.chg_a)
   : Number(gs.dis_a) > 0.2 ? -Number(gs.batt_v) * Number(gs.dis_a) : 0);
 
-function paintFinding(gs, faults, mode) {
-  const pv = +gs.pv_w || 0, load = +gs.out_w || 0, bp = battPower(gs);
-  const onGrid = (+gs.grid_v || 0) > 90 && mode === 'L';
-  let html;
-  if (faults.length) {
-    html = `<b>${faults.length === 1 ? '1 allarme attivo' : faults.length + ' allarmi attivi'}</b>: ${esc(faults.join('; '))}`;
-  } else if (onGrid) {
-    html = `<b>Casa in bypass</b>: ${fmt(load)} W presi dalla rete. Il FV produce ${fmt(pv)} W` +
-      (bp > 0 ? `, ${fmt(bp)} W in carica` : '') + '.';
-  } else if (pv >= load) {
-    html = `<b>${fmt(pv - load)} W in eccesso</b> dal FV: ${fmt(load)} W vanno alla casa` +
-      (bp > 0 ? `, ${fmt(bp)} W in carica alla batteria` : '') + '.';
-  } else {
-    html = `<b>${fmt(load - pv)} W scoperti</b> dal FV: la casa consuma ${fmt(load)} W` +
-      (bp < 0 ? `, la batteria ne dà ${fmt(-bp)} W` : '') + '.';
+function sourceStatus(gs, mode, modeName) {
+  if (mode === 'L' && Number(gs && gs.grid_v) > 90) return { text: 'Rete', tone: 'warn' };
+  if (mode === 'L') return { text: 'Rete assente', tone: 'warn' };
+  if (mode === 'B') return { text: 'Batteria', tone: 'good' };
+  if (mode === 'F') return { text: 'FAULT', tone: 'bad' };
+  return { text: modeName || '–', tone: '' };
+}
+
+function fvStatus(gs, onGrid) {
+  if (!gs || !Number.isFinite(+gs.pv_w) || !Number.isFinite(+gs.out_w)) return { text: '–', tone: '' };
+  const pv = +gs.pv_w, out = +gs.out_w;
+  if (onGrid) {
+    const chgA = Number(gs.chg_a), battV = Number(gs.batt_v);
+    if (+gs.ac_chg !== 1 && chgA > 0.2 && pv > 0 && Number.isFinite(battV)) {
+      return { text: fmt(chgA * battV) + ' W in carica', tone: 'good' };
+    }
+    return { text: '0 W in carica', tone: '' };
   }
-  $('finding').innerHTML = html;
+  const d = pv - out;
+  if (d > 50) return { text: fmt(d) + ' W in più', tone: 'good' };
+  if (d < -50) return { text: 'mancano ' + fmt(-d) + ' W', tone: '' };
+  return { text: 'copre la casa', tone: '' };
+}
+
+function paintStatusBlocks(gs, mode, modeName) {
+  const onGrid = mode === 'L' && Number(gs && gs.grid_v) > 90;
+  const src = sourceStatus(gs, mode, modeName);
+  const fv = fvStatus(gs, onGrid);
+  const srcEl = $('status-source'), fvEl = $('status-fv');
+  $('status-source-v').textContent = src.text;
+  srcEl.className = 'status-item' + (src.tone ? ' ' + src.tone : '');
+  $('status-fv-v').textContent = fv.text;
+  fvEl.className = 'status-item' + (fv.tone ? ' ' + fv.tone : '');
 }
 
 function paintStatus(n, faults) {
@@ -719,7 +753,7 @@ function render() {
   if (!NOW) return;
   const gs = NOW.gs || {}, cfg = NOW.cfg || {}, faults = NOW.faults || [];
   paintStatus(NOW, faults);
-  paintFinding(gs, faults, NOW.mode);
+  paintStatusBlocks(gs, NOW.mode, NOW.mode_name);
   paintFlow(gs, NOW.mode);
   paintMix();
   paintBattery(gs);

@@ -171,3 +171,13 @@ la validazione di comandi PI30, allarmi, codici di errore e specifiche elettrich
   con guasti e avvisi separati; nessuna ripetizione mentre persistono.
 - Il refresh periodico di `QPIRI` resta perché alimenta la dashboard; sparisce solo
   la notifica delle modifiche di configurazione.
+
+## Stato immediato in dashboard (2026-11-14)
+
+- Due blocchi sotto il titolo rispondono a colpo d'occhio: fonte attuale
+  (Rete/Batteria) e stato FV (in più / copre / mancano / in carica). La frase
+  lunga e `paintFinding` sono stati rimossi.
+- In bypass il FV è dichiarato "in carica" solo con `ac_chg=0`: la ricarica da AC
+  non è separabile dalla produzione FV, quindi non si dichiara un'eccedenza.
+- L'eccedenza usa una soglia di 50 W; il deficit è neutro perché di notte è la
+  condizione normale, non un guasto.
