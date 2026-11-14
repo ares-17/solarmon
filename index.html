@@ -11,6 +11,7 @@
   --warn-bg:#fffbeb; --warn-ink:#92400e; --warn-border:#fde68a;
   --neg-bg:#ffedea; --neg-ink:#831c1e; --neg-border:#f6c9c4;
   --grid:#e7e9e5;
+  --mix-batt:#9aa19c; --mix-grid:#c9cec8;
   --r-card:8px; --r-ctl:6px; --r-chip:4px;
   --gap:16px; --pad:24px;
   --fs-title:24px; --fs-kpi:30px; --fs-sec:16px; --fs-body:14px; --fs-small:12px;
@@ -25,6 +26,7 @@
     --warn-bg:#2a2416; --warn-ink:#d9a441; --warn-border:#4a3d1c;
     --neg-bg:#2c1a20; --neg-ink:#f08a83; --neg-border:#5a2a31;
     --grid:#262a28;
+    --mix-batt:#6f7772; --mix-grid:#454b47;
   }
 }
 *{box-sizing:border-box}
@@ -79,6 +81,20 @@ h1{font-size:var(--fs-title);line-height:1.2;font-weight:600;letter-spacing:-.02
 .node-batt{grid-column:1/-1}
 
 .grid{display:grid;gap:var(--gap)}
+.mix{margin-bottom:var(--gap)}
+.mix-body{display:flex;align-items:center;gap:28px;flex-wrap:wrap}
+.mix-ring{flex:none;width:132px;height:132px}
+.mix-key{list-style:none;padding:0;margin:0;display:grid;gap:8px;min-width:210px}
+.mix-key li{display:flex;align-items:center;gap:8px;font-size:13px}
+.mix-key i{width:10px;height:10px;border-radius:3px;flex:none}
+.mix-key .k{color:var(--muted)}
+.mix-key .p{color:var(--muted);min-width:4ch;text-align:right;margin-left:auto}
+.mix-key .v{font-weight:600;white-space:nowrap}
+.mix-bar{display:none;flex:1 1 100%}
+.mix-stack{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--raised)}
+.mix-stack span{display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;min-width:0}
+.mix-inline{list-style:none;padding:0;margin:9px 0 0;display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.mix-inline i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
 .row3{display:grid;gap:var(--gap)}
 .panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:15px 20px 16px;min-width:0}
 .p-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;min-height:26px}
@@ -153,6 +169,8 @@ figcaption{margin-top:6px;font-size:12px;color:var(--muted)}
   .legend{margin-left:0;order:3;flex-basis:100%}
   .meta{margin-left:auto}
   .kv div{font-size:13px}
+  .mix-ring,.mix-key{display:none}
+  .mix-bar{display:block}
 }
 @media (prefers-reduced-motion:no-preference){
   .seg button,.refresh,.settings-link,.brand,.back{transition:background-color .12s,border-color .12s,color .12s}
@@ -218,6 +236,18 @@ figcaption{margin-top:6px;font-size:12px;color:var(--muted)}
       </div>
     </div>
   </div>
+
+  <section class="panel mix" aria-labelledby="h-mix">
+    <div class="p-head">
+      <h2 id="h-mix">Da dove viene l'energia</h2>
+      <p class="meta" id="mix-meta">–</p>
+    </div>
+    <div class="mix-body">
+      <div class="mix-ring" id="mix-ring"></div>
+      <ul class="mix-key" id="mix-key"></ul>
+      <div class="mix-bar" id="mix-bar"></div>
+    </div>
+  </section>
 
   <div class="grid">
     <section class="panel" aria-labelledby="h-prod">
@@ -299,7 +329,7 @@ figcaption{margin-top:6px;font-size:12px;color:var(--muted)}
 const $ = (id) => document.getElementById(id);
 const RANGE = { 24: 'ultime 24 ore', 168: 'ultimi 7 giorni', 720: 'ultimi 30 giorni' };
 const USABLE_KWH = 4.8 * 0.5;
-let H = 24, NOW = null, SER = null, DAY = null, busy = false, timer = 0;
+let H = 24, NOW = null, SER = null, DAY = null, MIX = null, SUN = null, busy = false, timer = 0;
 
 const fmt = (v, d = 0) => (v === null || v === undefined || !Number.isFinite(+v)) ? '–'
   : new Intl.NumberFormat('it-IT', { minimumFractionDigits: d, maximumFractionDigits: d }).format(+v);
@@ -545,6 +575,75 @@ function paintCharts(cfg) {
   paintDaily(narrow);
 }
 
+const MIX_KEYS = [['solar', 'FV diretto'], ['batt', 'Batteria'], ['grid', 'Rete']];
+
+function mixShares(vals) {
+  const total = vals.reduce((a, b) => a + b, 0);
+  const pct = total ? vals.map((v) => v / total * 100) : vals.map(() => 0);
+  const out = pct.map(Math.floor);
+  const left = total ? 100 - out.reduce((a, b) => a + b, 0) : 0;
+  pct.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0])
+    .forEach(([, i], k) => { if (k < left) out[i]++; });
+  return out;
+}
+
+function paintMix() {
+  const meta = $('mix-meta'), ring = $('mix-ring'), key = $('mix-key'), bar = $('mix-bar');
+  const d = MIX || {};
+  const vals = [+d.solar_kwh || 0, +d.batt_kwh || 0, +d.grid_kwh || 0];
+  const total = vals.reduce((a, b) => a + b, 0);
+  ring.replaceChildren();
+  key.replaceChildren();
+  bar.replaceChildren();
+  meta.textContent = total > 0 ? fmt(total, 1) + ' kWh consumati · ' + RANGE[H] : 'nessun consumo nel periodo';
+  if (!total) return;
+  const pct = mixShares(vals);
+  const C = 2 * Math.PI * 50;
+  const svg = el('svg', { viewBox: '0 0 132 132', width: 132, height: 132 }, ring);
+  let acc = 0;
+  vals.forEach((v, i) => {
+    if (v <= 0) return;
+    const len = v / total * C;
+    el('circle', {
+      cx: 66, cy: 66, r: 50, fill: 'none', stroke: `var(--mix-${MIX_KEYS[i][0]})`,
+      'stroke-width': 14, 'stroke-dasharray': `${Math.max(0, len - 1.5).toFixed(2)} ${C.toFixed(2)}`,
+      'stroke-dashoffset': (-acc).toFixed(2), transform: 'rotate(-90 66 66)'
+    }, svg);
+    acc += len;
+  });
+  txt(svg, 66, 63, fmt(total, 1), { 'text-anchor': 'middle', 'font-size': 17, 'font-weight': 600, fill: 'var(--text)' });
+  txt(svg, 66, 79, 'kWh', { 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--muted)' });
+  vals.forEach((v, i) => {
+    if (v <= 0) return;
+    const li = document.createElement('li');
+    li.innerHTML = `<i style="background:var(--mix-${MIX_KEYS[i][0]})"></i>` +
+      `<span class="k">${MIX_KEYS[i][1]}</span><span class="p">${pct[i]}%</span>` +
+      `<span class="v">${fmt(v, 2)} kWh</span>`;
+    key.appendChild(li);
+  });
+  const stack = document.createElement('div');
+  stack.className = 'mix-stack';
+  vals.forEach((v, i) => {
+    if (v <= 0) return;
+    const seg = document.createElement('span');
+    seg.style.width = (v / total * 100).toFixed(2) + '%';
+    seg.style.background = `var(--mix-${MIX_KEYS[i][0]})`;
+    seg.style.color = i === 0 ? 'var(--surface)' : 'var(--text)';
+    if (pct[i] >= 12) seg.textContent = pct[i] + '%';
+    stack.appendChild(seg);
+  });
+  bar.appendChild(stack);
+  const ul = document.createElement('ul');
+  ul.className = 'mix-inline';
+  vals.forEach((v, i) => {
+    if (v <= 0) return;
+    const li = document.createElement('li');
+    li.innerHTML = `<i style="background:var(--mix-${MIX_KEYS[i][0]})"></i>${MIX_KEYS[i][1]} ${pct[i]}%`;
+    ul.appendChild(li);
+  });
+  bar.appendChild(ul);
+}
+
 function paintProduct(narrow) {
   if (!SER || !SER.ts || !SER.ts.length) return;
   $('cap-prod').textContent = 'Produzione FV e potenza del carico, ' + RANGE[H] + '.';
@@ -581,6 +680,7 @@ function render() {
   paintStatus(NOW, faults);
   paintFinding(gs, faults, NOW.mode);
   paintFlow(gs, NOW.mode);
+  paintMix();
   paintBattery(gs);
   paintScope(cfg);
   paintCharts(cfg);
@@ -599,8 +699,12 @@ async function load() {
   busy = true;
   $('refresh').disabled = true;
   try {
-    const [n, s, d] = await Promise.all([json('/api/now'), json('/api/series?h=' + H), json('/api/daily')]);
-    NOW = n; SER = s; DAY = d;
+    const [n, s, d, m, u] = await Promise.all([
+      json('/api/now'), json('/api/series?h=' + H), json('/api/daily'),
+      json('/api/mix?h=' + H).catch(() => null),
+      json('/api/sun?h=' + H).catch(() => null)
+    ]);
+    NOW = n; SER = s; DAY = d; MIX = m; SUN = u;
     render();
   } catch (e) {
     const last = NOW && NOW.ts ? ' Ultimo dato ' + clock(NOW.ts) + '.' : '';
