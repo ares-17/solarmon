@@ -20,6 +20,24 @@ def load_env():  # legge solarmon.env (o il file in SOLARMON_ENV); l'ambiente re
 
 load_env()
 E = os.environ.get
+log = logging.getLogger("solarmon")
+
+
+def parse_price(raw):
+    """Prezzo EUR/kWh da env: accetta virgola o punto; None se vuoto o non valido."""
+    text = raw.strip()
+    v = None
+    if text:
+        try:
+            v = float(text.replace(",", "."))
+        except ValueError:
+            pass
+        if v is None or not math.isfinite(v) or v <= 0:
+            log.warning("GRID_PRICE_EUR_KWH non valido: %r", raw)
+            v = None
+    return v
+
+
 DEV, DB = E("INVERTER_DEV", "/dev/inverter"), E("DB_PATH", "/var/lib/solarmon/solar.db")
 HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
 DEFAULT_BIND = "0.0.0.0" if (os.path.exists("/.dockerenv") or os.environ.get("CONTAINER") or os.environ.get("IN_DOCKER")) else "127.0.0.1"
@@ -30,8 +48,8 @@ TG_ADMIN = int(E("TG_ADMIN_ID") or TG_CHAT or 0)
 ALLOW_WRITE = E("ALLOW_WRITE", "0") == "1"
 GRID_CONFIRM, GRID_MIN_V = 3, 90.0
 SOLAR_PLACE, SOLAR_LAT, SOLAR_LON = E("SOLAR_PLACE", ""), E("SOLAR_LAT", ""), E("SOLAR_LON", "")
+GRID_PRICE = parse_price(E("GRID_PRICE_EUR_KWH", ""))
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
-log = logging.getLogger("solarmon")
 
 MODES = {"P": "Accensione", "S": "Standby", "L": "Rete", "B": "Batteria", "F": "FAULT", "H": "Risparmio"}
 

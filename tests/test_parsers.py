@@ -219,6 +219,17 @@ def test_prepare_maps_output_priority(solarmon):
     assert solarmon.prepare("uscita", "sbu", CFG) == ("POP02", "Priorita' uscita")
 
 
+# --- prezzo energia ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("0.25", 0.25), ("0,25", 0.25), (" 0.30 ", 0.30),
+    ("", None), ("abc", None), ("-1", None), ("0", None), ("nan", None),
+])
+def test_parse_price(solarmon, raw, expected):
+    assert solarmon.parse_price(raw) == expected
+
+
 # --- posizione solare -------------------------------------------------------
 
 
