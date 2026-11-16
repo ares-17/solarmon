@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Stato (2026-11-16):** completato. Checkbox allineate a posteriori dopo verifica di codice e test. Commit: `4fc554f`, `bd4143b`, `2a9d1c9`.
+
 **Goal:** ridurre le notifiche Telegram ai soli eventi reali e mostrare in dashboard, senza testi lunghi, se la casa è su rete o batteria e se il FV ha eccedenza.
 
 **Architecture:** un motore di notifiche testabile in `solarmon.py` (helper puri + classe `Notifier`) decide gli eventi; il loop principale gli delega ogni lettura. In `index.html` la frase `paintFinding` viene sostituita da due blocchi calcolati da `/api/now`: fonte attuale e stato FV. Nessuna nuova rotta, nessuna migrazione.
@@ -59,7 +61,7 @@
   - `class Notifier: __init__(self, send=None); update(self, gs: dict, mode: str, ws: str) -> None`
   - `alert(key, on, text_on, text_off="")` senza ripetizione periodica.
 
-- [ ] **Step 1: scrivi i test che falliscono**
+- [x] **Step 1: scrivi i test che falliscono**
 
 Aggiungi in fondo a `tests/test_parsers.py`:
 
@@ -186,12 +188,12 @@ def test_notifier_sends_alarms_active_at_startup(solarmon):
     assert sent == ["Allarmi inverter\nGuasti: Sovraccarico"]
 ```
 
-- [ ] **Step 2: esegui i test e verifica che falliscano**
+- [x] **Step 2: esegui i test e verifica che falliscano**
 
 Run: `python3 -m pytest tests/test_parsers.py -k "grid_on or grid_switch or alarm or notifier or alert_does" -v`
 Expected: FAIL con `AttributeError: module 'solarmon' has no attribute 'grid_on'` (e simili).
 
-- [ ] **Step 3: implementa helper e `Notifier` in `solarmon.py`**
+- [x] **Step 3: implementa helper e `Notifier` in `solarmon.py`**
 
 Aggiungi `GRID_CONFIRM = 3` e `GRID_MIN_V = 90.0` vicino alle altre costanti. Dopo `alert`, implementa:
 
@@ -217,7 +219,7 @@ Aggiungi `GRID_CONFIRM = 3` e `GRID_MIN_V = 90.0` vicino alle altre costanti. Do
     - allarmi: `groups = alarm_groups(ws, mode)`; prima lettura salva `prev_alarms` e, se non vuoto, invia `alarm_text(None, groups)`; alle letture successive, se l'insieme cambia, invia `alarm_text(prev_alarms, groups)` e aggiorna.
 - `alert(key, on, text_on, text_off="")`: se `on` e la chiave non è in `active`, salva e invia `text_on`; se `not on` e la chiave è in `active`, rimuove e invia `text_off` solo se non vuoto. Nessun uso di `REPEAT` o del tempo.
 
-- [ ] **Step 4: esegui i test e verifica che passino**
+- [x] **Step 4: esegui i test e verifica che passino**
 
 Run: `python3 -m pytest tests/test_parsers.py -k "grid_on or grid_switch or alarm or notifier or alert_does" -v`
 Expected: PASS (11 test).
@@ -225,7 +227,7 @@ Expected: PASS (11 test).
 Run: `python3 -m pytest -q`
 Expected: tutti i test esistenti più i nuovi, PASS.
 
-- [ ] **Step 5: commit**
+- [x] **Step 5: commit**
 
 ```bash
 git add solarmon.py tests/test_parsers.py
@@ -246,7 +248,7 @@ git commit -m "feat: motore di notifiche basato su eventi"
 - Consumes: `Notifier`, `alert`, `GRID_CONFIRM` da Task 1.
 - Produces: nessuna nuova funzione pubblica; il loop chiama `notifier.update(gs, mode, ws)`.
 
-- [ ] **Step 1: scrivi il test di regressione che fallisce**
+- [x] **Step 1: scrivi il test di regressione che fallisce**
 
 Aggiungi in fondo a `tests/test_parsers.py`:
 
@@ -260,12 +262,12 @@ def test_legacy_alerts_are_removed(solarmon):
         assert needle not in src
 ```
 
-- [ ] **Step 2: esegui il test e verifica che fallisca**
+- [x] **Step 2: esegui il test e verifica che fallisca**
 
 Run: `python3 -m pytest tests/test_parsers.py::test_legacy_alerts_are_removed -v`
 Expected: FAIL su `Batteria bassa`.
 
-- [ ] **Step 3: collega `Notifier` e rimuovi i vecchi alert da `main()`**
+- [x] **Step 3: collega `Notifier` e rimuovi i vecchi alert da `main()`**
 
 In `main()`:
 
@@ -284,7 +286,7 @@ In `main()`:
 
 Il resto del loop (storage, MQTT, sleep) resta invariato.
 
-- [ ] **Step 4: aggiorna `solarmon.env.example`**
+- [x] **Step 4: aggiorna `solarmon.env.example`**
 
 Sostituisci il blocco:
 
@@ -302,7 +304,7 @@ con:
 # non ci sono soglie da configurare.
 ```
 
-- [ ] **Step 5: aggiungi la nota in `docs/DECISIONS.md`**
+- [x] **Step 5: aggiungi la nota in `docs/DECISIONS.md`**
 
 In fondo al file:
 
@@ -321,12 +323,12 @@ In fondo al file:
   la notifica delle modifiche di configurazione.
 ```
 
-- [ ] **Step 6: esegui i test e verifica che passino**
+- [x] **Step 6: esegui i test e verifica che passino**
 
 Run: `python3 -m pytest -q`
 Expected: PASS, incluso `test_legacy_alerts_are_removed`.
 
-- [ ] **Step 7: commit**
+- [x] **Step 7: commit**
 
 ```bash
 git add solarmon.py solarmon.env.example docs/DECISIONS.md tests/test_parsers.py
@@ -349,7 +351,7 @@ git commit -m "feat: notifica solo passaggi rete/batteria, guasti e inverter mut
   - `fvStatus(gs, onGrid) -> {text: string, tone: '' | 'good' | 'warn' | 'bad'}`
   - `paintStatusBlocks(gs, mode, modeName) -> void`
 
-- [ ] **Step 1: scrivi il controllo che fallisce**
+- [x] **Step 1: scrivi il controllo che fallisce**
 
 Crea `/tmp/opencode/solarmon-status-check.py` con Playwright. Serve `index.html` da un server statico (`python3 -m http.server 8123` nella root del repo) e intercetta le API con `page.route`.
 
@@ -371,7 +373,7 @@ Il controllo legge `#status-source-v`, `#status-fv-v` e i `className` di `#statu
 Run: `python3 /tmp/opencode/solarmon-status-check.py`
 Expected: FAIL, `#status-source-v` assente.
 
-- [ ] **Step 2: aggiungi markup e CSS**
+- [x] **Step 2: aggiungi markup e CSS**
 
 Sostituisci in `index.html`:
 
@@ -409,7 +411,7 @@ Aggiungi il CSS dopo `.finding`:
 
 Nel blocco `@media (max-width:639px)` aggiungi `.status-v{font-size:18px}`.
 
-- [ ] **Step 3: implementa le tre funzioni JS e rimuovi `paintFinding`**
+- [x] **Step 3: implementa le tre funzioni JS e rimuovi `paintFinding`**
 
 Al posto di `paintFinding` (riga ~487) inserisci:
 
@@ -436,12 +438,12 @@ painStatusBlocks(gs, NOW.mode, NOW.mode_name);
 
 Elimina la funzione `paintFinding` e ogni riferimento a `#finding`. La classe `.finding` resta perché usata dalla pagina impostazioni.
 
-- [ ] **Step 4: esegui il controllo e verifica che passi**
+- [x] **Step 4: esegui il controllo e verifica che passi**
 
 Run: `python3 /tmp/opencode/solarmon-status-check.py`
 Expected: PASS su tutti gli 8 casi.
 
-- [ ] **Step 5: verifica sintassi, lint e resa**
+- [x] **Step 5: verifica sintassi, lint e resa**
 
 Estrai lo script inline e controllalo:
 
@@ -468,7 +470,7 @@ CHROME_PATH=${CHROME_PATH:-$HOME/.cache/ms-playwright/chromium-1254/chrome-linux
 
 Expected: `0 FAIL, 0 WARN`; apri gli screenshot desktop e mobile e verifica che i due blocchi siano sopra la piega e non sbordino. Controlla anche il tema scuro con una seconda esecuzione impostando `color_scheme="dark"` nello script Playwright.
 
-- [ ] **Step 6: aggiungi la nota in `docs/DECISIONS.md`**
+- [x] **Step 6: aggiungi la nota in `docs/DECISIONS.md`**
 
 In fondo al file:
 
@@ -484,7 +486,7 @@ In fondo al file:
   condizione normale, non un guasto.
 ```
 
-- [ ] **Step 7: commit**
+- [x] **Step 7: commit**
 
 ```bash
 git add index.html docs/DECISIONS.md
