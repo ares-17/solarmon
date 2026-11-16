@@ -82,6 +82,10 @@ In alternativa all'installazione nativa systemd con `setup.sh`, è possibile avv
    * Il container viene eseguito come utente di sistema dedicato `solarmon`.
    * Il database SQLite persistente risiede nella cartella `./data/` sull'host.
    * La dashboard risponde su `http://<IP_HOST>:8000`.
+   * Il compose imposta DNS espliciti (`1.1.1.1`, `8.8.8.8`): la Pi usa `systemd-resolved`
+     (stub su `127.0.0.53`), che Docker non può usare come upstream e senza il quale il
+     container resta senza DNS (Telegram va in `URLError`, `gaierror -3`). Se la rete blocca
+     i DNS pubblici, sostituiscili con l'IP del router o di Pi-hole.
 
 4. **Verifica stato e log**:
    ```bash

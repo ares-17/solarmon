@@ -91,7 +91,7 @@ Se l'utente non è nel gruppo, la copia fallisce con "Permission denied": verifi
 1. @BotFather → `/revoke` → nuovo token.
 2. `sudoedit /etc/solarmon.env` → aggiornare `TG_TOKEN`.
 3. `sudo systemctl restart solarmon`.
-4. Verificare che il messaggio di avvio arrivi su Telegram.
+4. Dal bot inviare `/stato` e verificare che risponda (non c'è più un messaggio di avvio automatico).
 
 **RAW_TOKEN**:
 
@@ -138,7 +138,7 @@ aggiornamento del repo e ripristino del database. Tenere una SD di scorta già c
 | Timeout intermittenti | nessun altro processo sull'hidraw, `cycle_s` in `/api/now` sotto 2 s |
 | `NAK` | comando non supportato dal modello: non insistere, annotare quale |
 | Dashboard irraggiungibile | `ss -ltnp | grep 8000`, `BIND_ADDR`, Tailscale `tailscale status` |
-| Errori Telegram | token valido, `TG_ADMIN_ID` corretto, 2FA attivo; mai incollare l'URL con il token |
+| Errori Telegram (`URLError`) | `docker exec solarmon python3 -c "import socket; socket.getaddrinfo('api.telegram.org', 443)"`: se dà `gaierror -3` manca DNS nel container, controlla `dns:` nel compose; altrimenti token valido, `TG_ADMIN_ID` corretto, 2FA attivo. Mai incollare l'URL con il token |
 | Pi sparita | Beszel sull'hub esterno, alimentazione, SD |
 
 Lettura manuale (solo con servizio fermo, un solo processo alla volta):

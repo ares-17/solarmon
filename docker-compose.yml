@@ -4,6 +4,13 @@ services:
     image: solarmon:latest
     container_name: solarmon
     restart: unless-stopped
+    # La Pi usa un resolver interno (systemd-resolved) che Docker scarta: senza upstream
+    # espliciti il container resta con il solo 127.0.0.11 e Telegram fallisce con URLError
+    # (gaierror -3, "Temporary failure in name resolution").
+    # Se la rete blocca i DNS pubblici, sostituisci con l'IP del router o di Pi-hole.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     ports:
       - "8000:8000"
     # In alternativa al port-mapping, su Raspberry Pi con Tailscale è possibile usare la rete dell'host:
