@@ -113,7 +113,8 @@ Principi applicati (dettaglio in `docs/DECISIONS.md`):
 ## Manutenzione
 
 - **Auto-restart**: unit systemd con `Restart=always` e `RestartSec=5`.
-- **Dati su disco**: SQLite in WAL, un campione ogni 60 s; le letture fini restano in RAM.
+- **Dati su disco**: SQLite in WAL, un campione ogni 60 s; le letture fini restano in RAM
+  e alimentano i kWh, integrati sul tempo reale a ogni lettura (non su `STORE_INTERVAL`).
 - **SD card**: log su RAM (`log2ram`), database su supporto esterno consigliato, backup giornaliero.
 - **Ripristino**: immagine "golden" della SD + `setup.sh` idempotente + backup del database.
 

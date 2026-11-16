@@ -7,6 +7,7 @@ cambia gli indici dei campi, il test fallisce prima che il dato sbagliato finisc
 import importlib.util
 import json
 import logging
+import sqlite3
 import threading
 import time
 import urllib.error
@@ -140,9 +141,7 @@ def test_notify_does_not_log_the_bot_token(solarmon, monkeypatch, caplog):
 def db(solarmon, tmp_path):
     solarmon.DB = str(tmp_path / "solar.db")
     con = solarmon.connect()
-    for statement in solarmon.SCHEMA:
-        con.execute(statement)
-    con.commit()
+    solarmon.ensure_schema(con)
     con.close()
     with solarmon.RING_LOCK:
         solarmon.RING.clear()
@@ -270,27 +269,59 @@ def test_sun_endpoint_without_position(db, server, monkeypatch):
     assert body == {"configured": False, "days": []}
 
 
-def test_mix_splits_load_between_solar_battery_and_grid(db, server, monkeypatch):
-    monkeypatch.setattr(db, "STORE_INTERVAL", 3600)  # 100 W per un'ora = 0,1 kWh
+def _add_samples(con, rows):
+    """rows: (ts, pv_w, out_w, mode[, (e_pv, e_solar, e_batt, e_grid)])."""
+    for row in rows:
+        e = row[4] if len(row) > 4 else (None,) * 4
+        con.execute("INSERT INTO samples(ts,pv_w,out_w,mode,grid_v,batt_v,chg_a,dis_a,"
+                    "e_pv_wh,e_solar_wh,e_batt_wh,e_grid_wh) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    tuple(row[:4]) + (230, 52, 0, 0) + tuple(e))
+
+
+def test_energy_step_uses_real_elapsed_seconds(solarmon):
+    prev = (1000.0, 500.0, 1000.0, "?")  # ts, pv_w, out_w, mode
+    cur = (1010.0, 500.0, 1000.0, "?")
+    assert solarmon.energy_step(prev, cur, gap=60) == pytest.approx(
+        (500 * 10 / 3600, 500 * 10 / 3600, 500 * 10 / 3600, 0))
+    assert solarmon.energy_step(prev, (1100.0, 500, 1000, "?"), gap=60) == (0, 0, 0, 0)
+
+
+def test_mix_uses_recorded_energy_not_store_interval(db, server, monkeypatch):
+    """I kWh sono la somma dell'energia misurata: STORE_INTERVAL non li cambia."""
     now = int(time.time())
     con = db.connect()
-    rows = [
-        (now - 120, 600, 400, "B"),  # FV diretto 400, batteria 0
-        (now - 60, 200, 500, "B"),   # FV diretto 200, batteria 300
-        (now - 30, 0, 500, "L"),     # bypass: tutto il carico e' rete
-    ]
-    for ts, pv, out, mode in rows:
-        con.execute("INSERT INTO samples(ts,pv_w,out_w,mode,grid_v,batt_v,chg_a,dis_a)"
-                    " VALUES(?,?,?,?,?,?,?,?)", (ts, pv, out, mode, 230, 52, 0, 0))
+    _add_samples(con, [
+        (now - 120, 0, 0, "?", (0, 0, 0, 0)),
+        (now - 60, 0, 0, "?", (300, 100, 150, 50)),
+        (now - 10, 0, 0, "?", (300, 100, 150, 50)),
+    ])
     con.commit()
     con.close()
-    with closing(urllib.request.urlopen(server + "/api/mix?h=1", timeout=5)) as response:
+    results = []
+    for store in (60, 3600):
+        monkeypatch.setattr(db, "STORE_INTERVAL", store)
+        with closing(urllib.request.urlopen(server + "/api/mix?h=1", timeout=5)) as response:
+            results.append(json.load(response))
+    assert results[0] == results[1]
+    assert results[0]["solar_kwh"] == 0.2
+    assert results[0]["batt_kwh"] == 0.3
+    assert results[0]["grid_kwh"] == 0.1
+    assert results[0]["load_kwh"] == 0.6
+
+
+@pytest.mark.parametrize("step", [10, 60])
+def test_mix_legacy_rows_are_integrated_over_real_time(db, server, step):
+    """Righe senza colonne energia: 1 kW per un'ora = 1 kWh, con qualunque cadenza."""
+    now = int(time.time())
+    con = db.connect()
+    _add_samples(con, [(now - 3600 + i, 0, 1000, "?") for i in range(0, 3601, step)])
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/mix?h=2", timeout=5)) as response:
         body = json.load(response)
-    assert body["solar_kwh"] == 0.6
-    assert body["batt_kwh"] == 0.3
-    assert body["grid_kwh"] == 0.5
-    assert body["load_kwh"] == 1.4
-    assert body["samples"] == 3
+    assert body["load_kwh"] == pytest.approx(1.0, abs=0.01)
+    assert body["batt_kwh"] == pytest.approx(1.0, abs=0.01)
+    assert body["solar_kwh"] == 0 and body["grid_kwh"] == 0
 
 
 def test_mix_without_samples_returns_zeroes(db, server):
@@ -299,18 +330,45 @@ def test_mix_without_samples_returns_zeroes(db, server):
     assert body["load_kwh"] == 0 and body["samples"] == 0
 
 
-def test_mix_parts_always_sum_to_load(db, server, monkeypatch):
-    monkeypatch.setattr(db, "STORE_INTERVAL", 360)  # 3335 W per 6 min = 0,3335 kWh
+def test_mix_ignores_data_gaps(db, server):
     now = int(time.time())
     con = db.connect()
-    rows = [
+    _add_samples(con, [(now - 3600, 0, 1000, "?"), (now - 600, 0, 1000, "?")])
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/mix?h=2", timeout=5)) as response:
+        body = json.load(response)
+    assert body["load_kwh"] == 0
+
+
+def test_mix_splits_load_over_real_elapsed_time(db, server, monkeypatch):
+    monkeypatch.setattr(db, "STORE_INTERVAL", 1800)  # righe storiche ogni 30 min
+    now = int(time.time())
+    con = db.connect()
+    _add_samples(con, [
+        (now - 3600, 600, 400, "B"),  # FV diretto 400, batteria 0
+        (now - 1800, 200, 500, "B"),  # FV diretto 200, batteria 300
+        (now, 0, 500, "L"),           # bypass: tutto il carico e' rete
+    ])
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/mix?h=2", timeout=5)) as response:
+        body = json.load(response)
+    assert body["solar_kwh"] == 0.2
+    assert body["batt_kwh"] == 0.15
+    assert body["grid_kwh"] == 0.125
+    assert body["load_kwh"] == 0.475
+    assert body["samples"] == 3
+
+
+def test_mix_parts_always_sum_to_load(db, server):
+    now = int(time.time())
+    con = db.connect()
+    _add_samples(con, [
         (now - 30, 3335, 3335, "B"),  # FV diretto
         (now - 20, 0, 3335, "B"),     # batteria
         (now - 10, 0, 3335, "L"),     # rete
-    ]
-    for ts, pv, out, mode in rows:
-        con.execute("INSERT INTO samples(ts,pv_w,out_w,mode,grid_v,batt_v,chg_a,dis_a)"
-                    " VALUES(?,?,?,?,?,?,?,?)", (ts, pv, out, mode, 230, 52, 0, 0))
+    ])
     con.commit()
     con.close()
     with closing(urllib.request.urlopen(server + "/api/mix?h=1", timeout=5)) as response:
@@ -320,18 +378,47 @@ def test_mix_parts_always_sum_to_load(db, server, monkeypatch):
 
 
 def test_mix_unknown_mode_is_not_bypass(db, server, monkeypatch):
-    monkeypatch.setattr(db, "STORE_INTERVAL", 3600)
+    monkeypatch.setattr(db, "STORE_INTERVAL", 3600)  # righe storiche ogni ora
     now = int(time.time())
     con = db.connect()
-    con.execute("INSERT INTO samples(ts,pv_w,out_w,mode,grid_v,batt_v,chg_a,dis_a)"
-                " VALUES(?,?,?,?,?,?,?,?)", (now - 30, 200, 500, "?", 230, 52, 0, 0))
+    _add_samples(con, [(now - 3700, 200, 500, "?"), (now - 100, 200, 500, "?")])
     con.commit()
     con.close()
-    with closing(urllib.request.urlopen(server + "/api/mix?h=1", timeout=5)) as response:
+    with closing(urllib.request.urlopen(server + "/api/mix?h=2", timeout=5)) as response:
         body = json.load(response)
     assert body["solar_kwh"] == 0.2
     assert body["batt_kwh"] == 0.3
     assert body["grid_kwh"] == 0
+
+
+def test_daily_integrates_pv_over_real_time_and_splits_midnight(db, server):
+    import datetime
+
+    base = datetime.datetime.combine(datetime.date.today() - datetime.timedelta(days=3),
+                                     datetime.time())
+    midnight = base.timestamp()
+    con = db.connect()
+    # 1 kW costante da 30 min prima a 30 min dopo la mezzanotte, un campione al minuto
+    _add_samples(con, [(int(midnight - 1800 + i), 1000, 0, "B") for i in range(0, 3601, 60)])
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/daily", timeout=5)) as response:
+        body = json.load(response)
+    previous = (base - datetime.timedelta(days=1)).timestamp()
+    assert body["kwh"][body["ts"].index(int(previous))] == pytest.approx(0.5, abs=0.01)
+    assert body["kwh"][body["ts"].index(int(midnight))] == pytest.approx(0.5, abs=0.01)
+
+
+def test_ensure_schema_migrates_legacy_database(solarmon, tmp_path):
+    con = sqlite3.connect(tmp_path / "legacy.db")
+    con.execute("CREATE TABLE samples(ts INTEGER PRIMARY KEY, pv_w REAL, pv_v REAL, batt_v REAL, out_w REAL,"
+                " load_pct REAL, chg_a REAL, dis_a REAL, temp_c REAL, grid_v REAL, mode TEXT, ws TEXT)")
+    con.commit()
+    solarmon.ensure_schema(con)
+    solarmon.ensure_schema(con)  # idempotente
+    cols = {r[1] for r in con.execute("PRAGMA table_info(samples)")}
+    assert set(solarmon.ENERGY_COLS) <= cols
+    con.close()
 
 
 # --- notifiche --------------------------------------------------------------

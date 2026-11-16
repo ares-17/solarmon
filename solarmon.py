@@ -197,22 +197,123 @@ def sun_payload(h):
             "lon": site["lon"], "days": days}
 
 
+def max_gap():
+    """Buco massimo (s) tra due letture contigue: oltre, il dato manca."""
+    return max(300, 3 * INTERVAL)
+
+
+def max_stored_gap():
+    """Come max_gap, ma tollera le righe storiche scritte ogni STORE_INTERVAL."""
+    return max(max_gap(), 3 * STORE_INTERVAL)
+
+
+def power_split(pv_w, out_w, mode):
+    """Ripartisce la potenza del carico tra FV diretto, batteria e rete (W)."""
+    pv, out = max(0.0, float(pv_w or 0.0)), max(0.0, float(out_w or 0.0))
+    if mode == "L":  # bypass: tutto il carico viene dalla rete
+        return 0.0, 0.0, out
+    return min(pv, out), max(0.0, out - pv), 0.0
+
+
+def energy_step(prev, cur, gap=None):
+    """Energia (Wh) tra due letture: PV prodotto e ripartizione del carico.
+
+    prev/cur: (ts, pv_w, out_w, mode). Integra con la regola del trapezio sui
+    secondi realmente trascorsi, non su un intervallo configurato. Oltre gap
+    il buco e' un dato mancante e non produce energia.
+    """
+    limit = max_gap() if gap is None else gap
+    dt = float(cur[0]) - float(prev[0])
+    if not 0 < dt <= limit:
+        return 0.0, 0.0, 0.0, 0.0
+    pv0, pv1 = max(0.0, float(prev[1] or 0.0)), max(0.0, float(cur[1] or 0.0))
+    s0, b0, g0 = power_split(prev[1], prev[2], prev[3])
+    s1, b1, g1 = power_split(cur[1], cur[2], cur[3])
+    k = dt / 3600.0
+    return (pv0 + pv1) / 2 * k, (s0 + s1) / 2 * k, (b0 + b1) / 2 * k, (g0 + g1) / 2 * k
+
+
+def energy_rows(rows):
+    """(inizio, fine, (e_pv, e_solar, e_batt, e_grid)) per ogni riga.
+
+    Usa i Wh salvati col campione; per le righe storiche (colonne NULL) li
+    ricava dai timestamp dei campioni. rows: (ts, pv_w, out_w, mode, e_*).
+    """
+    prev, limit = None, max_stored_gap()
+    for ts, pv, out, mode, e_pv, e_solar, e_batt, e_grid in rows:
+        if None in (e_pv, e_solar, e_batt, e_grid):
+            step = energy_step(prev, (ts, pv, out, mode), limit) if prev else (0.0,) * 4
+        else:
+            step = (float(e_pv), float(e_solar), float(e_batt), float(e_grid))
+        yield (prev[0] if prev else None), ts, step
+        prev = (ts, pv, out, mode)
+
+
+def window_energy(rows, lo, hi):
+    """Somma l'energia degli intervalli ritagliandoli sulla finestra [lo, hi]."""
+    total = [0.0, 0.0, 0.0, 0.0]
+    for start, end, step in energy_rows(rows):
+        if start is None or end <= lo or start >= hi:
+            continue
+        span = float(end) - float(start)
+        if span <= 0:
+            continue
+        fraction = (min(float(end), hi) - max(float(start), lo)) / span
+        if fraction > 0:
+            total = [a + b * fraction for a, b in zip(total, step)]
+    return total
+
+
 def mix_payload(h):
     """Energia consumata nel periodo, divisa per fonte. Le ricariche non entrano."""
-    since = time.time() - h * 3600
+    since, now = time.time() - h * 3600, time.time()
     with closing(connect()) as con:
-        row = con.execute(
-            "SELECT COALESCE(SUM(CASE WHEN mode<>'L' THEN MIN(COALESCE(pv_w,0), COALESCE(out_w,0)) ELSE 0 END),0),"
-            " COALESCE(SUM(CASE WHEN mode<>'L' THEN MAX(0, COALESCE(out_w,0)-COALESCE(pv_w,0)) ELSE 0 END),0),"
-            " COALESCE(SUM(CASE WHEN mode='L' THEN COALESCE(out_w,0) ELSE 0 END),0),"
-            " COALESCE(SUM(COALESCE(out_w,0)),0), COUNT(*), MIN(ts), MAX(ts)"
-            " FROM samples WHERE ts>?", (since,)).fetchone()
-    solar, batt, grid, _load, n, first, last = row
-    k = STORE_INTERVAL / 3600000.0
-    parts = [round(x * k, 3) for x in (solar, batt, grid)]
+        rows = con.execute("SELECT ts, pv_w, out_w, mode, %s FROM samples WHERE ts>? ORDER BY ts"
+                           % ",".join(ENERGY_COLS), (since - max_stored_gap(),)).fetchall()
+    _pv, solar, batt, grid = window_energy(rows, since, now)
+    parts = [round(x / 1000.0, 3) for x in (solar, batt, grid)]
+    visible = [r for r in rows if r[0] >= since]
     return {"h": h, "solar_kwh": parts[0], "batt_kwh": parts[1],
             "grid_kwh": parts[2], "load_kwh": round(sum(parts), 3),
-            "samples": n, "from": first, "to": last}
+            "samples": len(visible), "from": visible[0][0] if visible else None,
+            "to": visible[-1][0] if visible else None}
+
+
+def day_of(ts):
+    return datetime.date.fromtimestamp(ts)
+
+
+def midnight_of(day):
+    return datetime.datetime.combine(day, datetime.time()).timestamp()
+
+
+def next_midnight(ts):
+    return midnight_of(day_of(ts) + datetime.timedelta(days=1))
+
+
+def daily_payload(days=30):
+    """Produzione FV per giorno locale, integrata sul tempo reale."""
+    since = time.time() - days * 86400
+    with closing(connect()) as con:
+        rows = con.execute("SELECT ts, pv_w, out_w, mode, %s FROM samples WHERE ts>? ORDER BY ts"
+                           % ",".join(ENERGY_COLS), (since,)).fetchall()
+    buckets = collections.defaultdict(float)
+    for start, end, (e_pv, _solar, _batt, _grid) in energy_rows(rows):
+        if e_pv <= 0:
+            continue
+        if start is None:
+            buckets[day_of(end)] += e_pv / 1000.0
+            continue
+        a, b = float(start), float(end)
+        while a < b:  # ripartisce l'intervallo ai confini di mezzanotte locali
+            cut = min(b, next_midnight(a))
+            if cut <= a:  # difesa da fusi orari anomali
+                cut = b
+            buckets[day_of(a)] += e_pv * (cut - a) / (b - a) / 1000.0
+            a = cut
+    ordered = sorted(buckets)
+    return {"ts": [int(midnight_of(d)) for d in ordered],
+            "kwh": [round(buckets[d], 2) for d in ordered]}
 
 
 def crc16(data):  # CRC-XMODEM con la correzione PI30 (0x28, 0x0D, 0x0A -> +1)
@@ -438,14 +539,26 @@ STATE = {"ts": 0, "gs": {}, "mode": "?", "ws": "", "cfg": {}, "cycle_s": 0}
 RING = collections.deque(maxlen=max(10, RAW_KEEP // INTERVAL + 1))
 RING_LOCK = threading.Lock()
 COLS = ["ts", "pv_w", "pv_v", "batt_v", "out_w", "load_pct", "chg_a", "dis_a", "temp_c", "grid_v", "mode", "ws"]
+ENERGY_COLS = ["e_pv_wh", "e_solar_wh", "e_batt_wh", "e_grid_wh"]
 SCHEMA = ["CREATE TABLE IF NOT EXISTS samples(ts INTEGER PRIMARY KEY, pv_w REAL, pv_v REAL, batt_v REAL, out_w REAL,"
-          " load_pct REAL, chg_a REAL, dis_a REAL, temp_c REAL, grid_v REAL, mode TEXT, ws TEXT)",
+          " load_pct REAL, chg_a REAL, dis_a REAL, temp_c REAL, grid_v REAL, mode TEXT, ws TEXT,"
+          " e_pv_wh REAL, e_solar_wh REAL, e_batt_wh REAL, e_grid_wh REAL)",
           "CREATE TABLE IF NOT EXISTS audit(ts INTEGER, who TEXT, cmd TEXT, result TEXT, before TEXT)"]
 
 
 def connect():
     c = sqlite3.connect(DB, timeout=5); c.execute("PRAGMA journal_mode=WAL"); c.execute("PRAGMA synchronous=NORMAL")
     c.execute("PRAGMA busy_timeout=5000"); return c
+
+
+def ensure_schema(con):
+    """Crea le tabelle e aggiunge le colonne energia ai DB esistenti."""
+    for statement in SCHEMA: con.execute(statement)
+    have = {r[1] for r in con.execute("PRAGMA table_info(samples)")}
+    for col in ENERGY_COLS:
+        if col not in have:
+            con.execute("ALTER TABLE samples ADD COLUMN %s REAL" % col)
+    con.commit()
 
 
 def faults(ws): return [WS[i][0] for i in WS if ws[i:i + 1] == "1"]
@@ -545,11 +658,7 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == "/api/mix":
                 self.out(mix_payload(qint(q, "h", 24, 1, 24 * 365)))
             elif u.path == "/api/daily":
-                with closing(connect()) as con:
-                    rows = con.execute("SELECT min(ts), sum(pv_w)*%d/3600000.0 FROM samples WHERE ts>? "
-                                       "GROUP BY date(ts,'unixepoch','localtime') ORDER BY 1" % STORE_INTERVAL,
-                                       (time.time() - 30 * 86400,)).fetchall()
-                self.out({"ts": [r[0] for r in rows], "kwh": [round(r[1], 2) for r in rows]})
+                self.out(daily_payload())
             else:
                 self.send_error(404)
         except Exception as e:
@@ -605,9 +714,12 @@ def handle(m, inv, con):
         elif cmd == "/stato": tg_send(status_text())
         elif cmd == "/config": tg_send("\n".join("%s: %s" % kv for kv in STATE["cfg"].items()) or "Config non ancora letta.")
         elif cmd == "/oggi":
-            kwh = con.execute("SELECT coalesce(sum(pv_w),0)*%d/3600000.0 FROM samples WHERE date(ts,'unixepoch','localtime')="
-                              "date('now','localtime')" % STORE_INTERVAL).fetchone()[0]
-            tg_send("Produzione FV oggi: %.2f kWh" % kwh)
+            start = midnight_of(datetime.date.today())
+            rows = con.execute("SELECT ts, pv_w, out_w, mode, %s FROM samples WHERE ts>=? ORDER BY ts"
+                               % ",".join(ENERGY_COLS),
+                               (start - max_stored_gap(),)).fetchall()
+            wh = window_energy(rows, start, time.time())[0]
+            tg_send("Produzione FV oggi: %.2f kWh" % (wh / 1000.0))
         elif cmd == "/set":
             if not ALLOW_WRITE: return tg_send("Scrittura disattivata (ALLOW_WRITE=0 nel file env).")
             if len(parts) != 3: return tg_send("Uso: /set <parametro> <valore>\n" + "\n".join(describe(n) for n in SETTINGS))
@@ -657,8 +769,7 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     os.makedirs(os.path.dirname(os.path.abspath(DB)), exist_ok=True)
     con = connect()
-    for s in SCHEMA: con.execute(s)
-    con.commit()
+    ensure_schema(con)
     inv = Inverter()
     def shutdown(*_):
         log.info("arresto in corso...")
@@ -673,14 +784,17 @@ def main():
         log.warning("/api/raw risponde 403: BIND_ADDR=%s senza RAW_TOKEN", BIND)
     if TG_TOKEN and TG_CHAT and TG_ADMIN: threading.Thread(target=bot_loop, args=(inv,), daemon=True).start()
     mq, fails, cfg_ts, store_ts = mqtt_client(), 0, 0, 0
-    notifier = Notifier()
+    store_cols = COLS + ENERGY_COLS
+    notifier, prev_read, acc = Notifier(), None, [0.0, 0.0, 0.0, 0.0]
     while True:
         t0 = time.time()
         try:
-            gs = parse_gs(inv.query("QPIGS")); mode = inv.query("QMOD")[:1]; ws = inv.query("QPIWS")[:32]
+            gs = parse_gs(inv.query("QPIGS")); t_gs = time.time()
+            mode = inv.query("QMOD")[:1]; ws = inv.query("QPIWS")[:32]
             fails = 0; alert("nodata", False, "", "Comunicazione con l'inverter ripristinata.")
         except Exception as e:
             fails += 1; log.error("lettura: %s", e)
+            prev_read = None  # non inventare energia nel buco di comunicazione
             alert("nodata", fails * INTERVAL >= 60, "Inverter non risponde da %d s (%d letture)." % (fails * INTERVAL, fails),
                   "Comunicazione con l'inverter ripristinata.")
             time.sleep(INTERVAL); continue
@@ -688,12 +802,21 @@ def main():
             try:
                 STATE["cfg"] = parse_cfg(inv.query("QPIRI")); cfg_ts = t0
             except Exception as e: log.error("QPIRI: %s", e)
-        row = dict(ts=int(t0), **gs, mode=mode, ws=ws)
+        row = dict(ts=int(t_gs), **gs, mode=mode, ws=ws)
         with RING_LOCK: RING.append(row)
-        STATE.update(ts=int(t0), gs=gs, mode=mode, ws=ws, cycle_s=round(time.time() - t0, 2))
+        STATE.update(ts=int(t_gs), gs=gs, mode=mode, ws=ws, cycle_s=round(time.time() - t0, 2))
         notifier.update(gs, mode, ws)
+        if prev_read is not None:  # energia sul tempo reale, a ogni lettura
+            acc = [a + b for a, b in zip(acc, energy_step(prev_read, (t_gs, gs["pv_w"], gs["out_w"], mode)))]
+        prev_read = (t_gs, gs["pv_w"], gs["out_w"], mode)
         if t0 - store_ts >= STORE_INTERVAL - 0.5:
-            store_ts = t0; con.execute("INSERT OR REPLACE INTO samples VALUES(%s)" % ",".join("?" * len(COLS)), [row[c] for c in COLS]); con.commit()
+            store_ts = t0
+            stored = dict(row)
+            stored.update(zip(ENERGY_COLS, acc))
+            con.execute("INSERT OR REPLACE INTO samples(%s) VALUES(%s)"
+                        % (",".join(store_cols), ",".join("?" * len(store_cols))),
+                        [stored[c] for c in store_cols]); con.commit()
+            acc = [0.0, 0.0, 0.0, 0.0]
         if mq: mq.publish("solar/inverter/state", json.dumps(dict(gs, mode=mode, ws=ws)), retain=True)
         time.sleep(max(0.5, INTERVAL - (time.time() - t0)))
 

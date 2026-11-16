@@ -63,7 +63,8 @@ Stato: approvato dall'utente, da pianificare
 ### `GET /api/mix?h=N`
 
 - `h` come sopra. Aggregazione sull'intera finestra, un solo record.
-- Attribuzione per campione (peso fisso `STORE_INTERVAL`, come `/api/daily`):
+- Attribuzione per campione, con peso pari al tempo reale trascorso tra letture
+  (integrale della potenza, non `STORE_INTERVAL` fisso):
 
 | Voce | Regola |
 |---|---|

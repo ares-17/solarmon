@@ -19,12 +19,16 @@ extra sono opzionali (`paho-mqtt` solo con `MQTT_HOST` impostato).
 ## D2 — SQLite con WAL, scrittura ogni 60 s
 
 **Scelta.** Un campione ogni `STORE_INTERVAL` (60 s) anche se la lettura è ogni 10 s.
-Le letture fini restano in un ring buffer in RAM (`RAW_KEEP`, 3600 s).
+Le letture fini restano in un ring buffer in RAM (`RAW_KEEP`, 3600 s) e alimentano
+l'accumulo di energia.
 
 **Motivo.** La SD si consuma con le scritture continue. Per un inverter 60 s sono
-abbondanti per lo storico; le letture fini servono solo per diagnosi e per `/api/raw`.
+abbondanti per lo storico; le letture fini servono per diagnosi, `/api/raw` e per
+integrare l'energia sul tempo reale.
 
-**Conseguenze.** `/api/raw` oltre la finestra RAM legge dal database a 60 s.
+**Conseguenze.** `/api/raw` oltre la finestra RAM legge dal database a 60 s. L'energia
+in kWh non dipende da questo intervallo: è integrata sul tempo reale (vedi
+"Energia sul tempo reale").
 
 ## D3 — HTTP in sola lettura, bind su loopback
 
@@ -158,6 +162,20 @@ la validazione di comandi PI30, allarmi, codici di errore e specifiche elettrich
   lettura prudente, anche se il FV sta caricando la batteria.
 - `SOLAR_PLACE` risolve il **capoluogo** di provincia, non il comune: errore < ~10 km,
   irrilevante per alba/tramonto (1° di longitudine ≈ 4 minuti).
+
+## Energia sul tempo reale (2026-11-16)
+
+- I kWh consumati e prodotti non si ottengono più moltiplicando la somma dei campioni di
+  potenza per `STORE_INTERVAL`: rappresentano l'integrale della potenza sul tempo
+  realmente trascorso (regola del trapezio tra letture consecutive).
+- Ogni lettura contribuisce con la propria energia; i Wh per fonte sono accumulati e
+  salvati insieme al campione (`e_pv_wh`, `e_solar_wh`, `e_batt_wh`, `e_grid_wh`).
+  `STORE_INTERVAL` decide solo ogni quanto scrivere su SD, non il totale in kWh.
+- `INTERVAL` resta la risoluzione di misura: abbassarlo migliora la cattura dei picchi,
+  ma il totale non dipende da `STORE_INTERVAL` (testato con cadenze 10 s e 60 s).
+- Un buco di comunicazione oltre `max(300 s, 3 × INTERVAL)` non produce energia: meglio
+  un dato mancante che un consumo inventato. Le righe storiche senza colonne energia
+  vengono integrate dai loro timestamp; la migrazione aggiunge le colonne al DB esistente.
 
 ## Notifiche essenziali (2026-11-14)
 
