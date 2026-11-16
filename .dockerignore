@@ -10,8 +10,10 @@ __pycache__
 .ruff_cache
 .taste-skill
 .omo
+data/
 *.db
 *.db-wal
 *.db-shm
+*.db-*
 *.env
 !solarmon.env.example
