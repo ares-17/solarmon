@@ -138,8 +138,21 @@ figcaption{margin-top:6px;font-size:13px;color:var(--muted)}
 .grp .hint{margin-top:2px;font-size:12px;color:var(--muted)}
 .kv{margin-top:10px;border-top:1px solid var(--border)}
 .kv div{display:flex;justify-content:space-between;gap:16px;padding:9px 0;border-bottom:1px solid var(--rule);font-size:14px}
-.kv .k{color:var(--muted)}
-.kv .v{font-weight:500;white-space:nowrap}
+.kv .k{display:flex;align-items:baseline;gap:8px;color:var(--muted)}
+.kv .k-prog{display:inline-block;padding:1px 6px;border-radius:var(--r-chip);background:var(--raised);border:1px solid var(--border);color:var(--muted);font-size:11px;font-weight:600}
+.kv .v{font-weight:500;white-space:nowrap;text-align:right}
+.kv .v-sub{display:block;font-size:11px;font-weight:400;color:var(--muted);margin-top:1px}
+.diag-list{display:grid;grid-template-columns:1fr;gap:10px;margin-top:14px}
+@media (min-width:640px){.diag-list{grid-template-columns:repeat(2,1fr)}}
+.diag-item{display:flex;flex-direction:column;gap:5px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);font-size:13px}
+.diag-item.active-fault{border-color:var(--neg-border);background:var(--neg-bg);box-shadow:none}
+.diag-head{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px}
+.diag-tag{display:inline-block;padding:1px 7px;border-radius:var(--r-chip);font-size:11px;font-weight:600;white-space:nowrap}
+.diag-tag.fault{background:var(--neg-bg);color:var(--neg-ink);border:1px solid var(--neg-border)}
+.diag-tag.warn{background:var(--warn-bg);color:var(--warn-ink);border:1px solid var(--warn-border)}
+.diag-cause{color:var(--muted);font-size:12px;line-height:1.4}
+.diag-action{margin-top:auto;padding-top:4px;font-size:12px;line-height:1.4;color:var(--text)}
+.diag-action b{font-weight:600}
 .note{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-top:12px;font-size:13px;color:var(--muted);max-width:80ch}
 .pill{display:inline-block;padding:1px 8px;border:1px solid var(--warn-border);border-radius:999px;background:var(--warn-bg);color:var(--warn-ink);font-size:11px;font-weight:600;white-space:nowrap}
 
@@ -339,6 +352,12 @@ figcaption{margin-top:6px;font-size:13px;color:var(--muted)}
   <section class="grp" aria-labelledby="g-chg">
     <h2 id="g-chg">Carica e priorità</h2>
     <div class="kv" id="kv-chg"></div>
+  </section>
+  <section class="grp" aria-labelledby="g-diag">
+    <h2 id="g-diag">Guida diagnostica errori e avvisi (Manuale PIP-MS)</h2>
+    <p class="hint">Codici di guasto (Fault) e allarmi (Warning) ufficiali estratti dal manuale PIP-MS 1-5KVA (PF1). Se l'inverter segnala un allarme, compare evidenziato in cima.</p>
+    <p class="hint" id="diag-unmapped" hidden></p>
+    <div class="diag-list" id="diag-list"></div>
   </section>
 </main>
 
@@ -607,7 +626,146 @@ function paintScope(cfg) {
   $('scope').textContent = parts.length ? 'Impianto off-grid · ' + parts.join(' · ') : 'Impianto off-grid';
   const count = cfg ? Object.keys(cfg).length : 0;
   $('cfg-count').textContent = count ? count + ' valori' : '';
+  paintDiagnostics(NOW ? NOW.faults || [] : []);
   if (!$('settings').hidden) paintSettings(cfg);
+}
+
+const CFG_META = {
+  'AC in V': { prog: '', sub: 'Tensione nominale di ingresso AC' },
+  'AC in A': { prog: '', sub: 'Corrente nominale di ingresso AC' },
+  'Uscita V': { prog: '', sub: 'Tensione nominale di uscita AC pura' },
+  'Frequenza Hz': { prog: 'Prog 09', sub: 'Frequenza erogata in isola (50 / 60 Hz)' },
+  'Uscita A': { prog: '', sub: 'Corrente nominale di uscita AC erogabile' },
+  'VA nominali': { prog: '', sub: 'Potenza apparente massima inverter' },
+  'W nominali': { prog: '', sub: 'Potenza attiva massima continua (PF=1.0)' },
+  'Batteria nominale V': { prog: '', sub: 'Tensione nominale banco batterie (48 V)' },
+  'Bulk V': { prog: 'Prog 26', sub: 'Fase assorbimento costante (C.V. voltage)' },
+  'Float V': { prog: 'Prog 27', sub: 'Tensione mantenimento tampone (Floating)' },
+  'Tipo batteria': { prog: 'Prog 05', sub: 'Profilo di carica (AGM / Flooded / User)' },
+  'Cutoff batteria V': { prog: 'Prog 29', sub: 'Soglia distacco carichi per salvaguardia batteria' },
+  'Ritorno a rete sotto V': { prog: 'Prog 12', sub: 'Soglia commutazione su rete (Back to Utility)' },
+  'Ritorno a batteria sopra V': { prog: 'Prog 13', sub: 'Soglia rientro in isola batteria (Back to Battery)' },
+  'Max carica A': { prog: 'Prog 02', sub: 'Corrente massima combinata di carica (FV + Rete)' },
+  'Max carica AC A': { prog: 'Prog 11', sub: 'Corrente massima prelevata dal caricatore AC' },
+  "Priorita' carica": { prog: 'Prog 16', sub: 'Sorgente carica (Solar first / Utility first / Solar+Utility)' },
+  "Priorita' uscita": { prog: 'Prog 01', sub: 'Priorità alimentazione casa (SBU / Utility first / Solar first)' },
+  'Range ingresso': { prog: 'Prog 03', sub: 'Finestra tensione AC (Appliances 90-280V / UPS 170-280V)' }
+};
+
+const DIAG_FAULTS = [
+  { code: 1, name: 'Ventola bloccata o guasta', orig: 'Fan locked', cause: 'Pale ostruite da sporco o motore ventola bloccato.', action: 'Verificare e rimuovere ostruzioni; sostituire ventola se danneggiata.' },
+  { code: 2, name: 'Sovratemperatura interna', orig: 'Over temperature', cause: 'Ponte inverter > 100°C o convertitore DC/DC > 120°C.', action: 'Verificare aerazione del locale (< 50°C) e pulire griglie di ventilazione.' },
+  { code: 3, name: 'Sovratensione batteria', orig: 'Battery voltage too high', cause: 'Tensione banco batterie superiore alla soglia limite ammessa.', action: 'Verificare numero elementi in serie e soglie Bulk/Float (Prog 26/27).' },
+  { code: 4, name: 'Batteria scarica critica', orig: 'Battery voltage too low', cause: 'Tensione scesa sotto il limite di cut-off di sicurezza.', action: 'Ricaricare le batterie da rete o attendere produzione solare.' },
+  { code: 5, name: 'Cortocircuito uscita o sovraccarico istantaneo', orig: 'Output short circuited', cause: 'Cortocircuito su linea carichi AC o carico impulsivo violento.', action: 'Verificare impianto elettrico a valle e disconnettere carichi guasti.' },
+  { code: 6, name: 'Tensione uscita anomala', orig: 'Output voltage abnormal', cause: 'Tensione AC erogata oltre 260 Vac o forma d\'onda instabile.', action: 'Ridurre i carichi; se persiste a vuoto contattare l\'assistenza.' },
+  { code: 7, name: 'Sovraccarico prolungato (timeout)', orig: 'Overload time out', cause: 'Carico > 110% per tempo limite o picco > 150% istantaneo.', action: 'Spegnere elettrodomestici energivori per rientrare nella potenza nominale.' },
+  { code: 8, name: 'Sovratensione bus DC', orig: 'Bus voltage too high', cause: 'Tensione bus continuo intermedio oltre soglia di sicurezza.', action: 'Riavviare unità; verificare tensione a vuoto stringa fotovoltaica.' },
+  { code: 9, name: 'Avvio dolce bus fallito', orig: 'Bus soft start failed', cause: 'Precarica condensatori bus DC non riuscita.', action: 'Riavviare l\'inverter; se persiste richiede assistenza interna.' },
+  { code: 11, name: 'Relè principale guasto', orig: 'Main relay failed', cause: 'Relè di scambio rete/inverter bloccato o cablaggio instabile.', action: 'Controllare collegamenti terra e linea AC; riavviare.' },
+  { code: 51, name: 'Sovracorrente o picco violento', orig: 'Over current / surge', cause: 'Picco transitorio violento sui transistor di potenza inverter.', action: 'Riavviare l\'unità; verificare che non vi siano carichi induttivi anomali.' },
+  { code: 52, name: 'Tensione bus DC troppo bassa', orig: 'Bus voltage too low', cause: 'Tensione continua interna collassata sotto carico.', action: 'Ridurre carichi collegati e riavviare.' },
+  { code: 53, name: 'Avvio dolce inverter fallito', orig: 'Inverter soft start failed', cause: 'Mancata salita rampa tensione inverter (carico capacitivo elevato).', action: 'Scollegare carichi all\'accensione e riavviare.' },
+  { code: 55, name: 'Tensione continua presente in uscita AC', orig: 'Over DC voltage in AC output', cause: 'Componente DC rilevata sull\'uscita alternata.', action: 'Spegnere e riavviare; assistenza tecnica se il difetto persiste.' },
+  { code: 56, name: 'Batteria scollegata o fusibile aperto', orig: 'Battery connection open', cause: 'Batteria disconnessa durante la marcia o fusibile DC bruciato.', action: 'Verificare serraggio morsetti batteria, sezionatore e fusibile linea DC.' },
+  { code: 57, name: 'Sensore di corrente guasto', orig: 'Current sensor failed', cause: 'Sensore di corrente interno fuori taratura o interrotto.', action: 'Assistenza tecnica autorizzata.' },
+  { code: 58, name: 'Tensione uscita troppo bassa (F58)', orig: 'Output voltage too low', cause: 'Tensione AC di uscita scesa sotto 190 Vac sotto carico.', action: 'Ridurre il carico connesso; controllare stabilità tensione batteria.' }
+];
+
+const DIAG_WARNS = [
+  { code: 1, name: 'Ventola bloccata a inverter attivo', beep: '3 bip / secondo', cause: 'Ventola ostruita con inverter funzionante.', action: 'Rimuovere ostruzione prima che intervenga lo spegnimento per sovratemperatura.' },
+  { code: 3, name: 'Sovraccarica batteria', beep: '1 bip / secondo', cause: 'Tensione batteria superiore ai limiti.', action: 'Verificare impostazioni tensioni di carica (Prog 26 e 27).' },
+  { code: 4, name: 'Preallarme batteria scarica', beep: '1 bip / secondo', cause: 'Batteria in esaurimento sotto soglia di avviso.', action: 'Prepararsi al passaggio a rete o spegnere carichi pesanti.' },
+  { code: 7, name: 'Avviso sovraccarico', beep: '1 bip / 0.5 secondi', cause: 'Carico assorbito superiore al 100% della potenza nominale.', action: 'Ridurre immediatamente i carichi prima dello scatto per timeout.' },
+  { code: 10, name: 'Derating potenza erogata', beep: '2 bip / 3 secondi', cause: 'Potenza ridotta per alta temperatura o bassa tensione di ingresso.', action: 'Migliorare ventilazione locale o controllare linea di ingresso.' },
+  { code: 12, name: 'Carica solare sospesa per batteria bassa', beep: 'Silenzioso', cause: 'Tensione batteria anomala/troppo bassa per il regolatore MPPT.', action: 'Ricaricare parzialmente la batteria da rete esterna.' },
+  { code: 13, name: 'Carica solare sospesa per sovratensione PV', beep: 'Silenzioso', cause: 'Tensione pannelli FV oltre 145 Vdc (limite massimo MPPT).', action: 'Ridurre numero di pannelli in serie per non danneggiare l\'inverter.' },
+  { code: 14, name: 'Carica solare sospesa per sovraccarico', beep: 'Silenzioso', cause: 'Sovraccarico o sovratemperatura circuito MPPT.', action: 'Verificare aerazione inverter e potenza di picco stringa fotovoltaica.' },
+  { code: 15, name: 'Equalizzazione batteria in corso', beep: 'Silenzioso', cause: 'Ciclo di equalizzazione periodico o manuale attivo.', action: 'Nessuna azione richiesta: ciclo di desolfatazione in esecuzione.' }
+];
+
+// QPIWS (NOW.faults) -> schede del manuale. Le condizioni non elencate non hanno
+// una scheda corrispondente (es. "Inverter fault", "Mancanza rete", "Errore EEPROM").
+const WS_DIAG = {
+  'bus over': ['f8'],
+  'bus under': ['f52'],
+  'bus soft fail': ['f9'],
+  'tensione di uscita troppo bassa (display f58?)': ['f58'],
+  'tensione di uscita troppo alta': ['f6'],
+  'sovratemperatura': ['f2'],
+  'ventola bloccata': ['w1'],
+  'tensione batteria troppo alta': ['w3'],
+  'batteria scarica (allarme)': ['w4'],
+  'batteria sotto soglia, spegnimento': ['f4'],
+  'sovraccarico': ['w7'],
+  'sovracorrente inverter': ['f51'],
+  'inverter soft fail': ['f53'],
+  'tensione dc in uscita eccessiva': ['f55'],
+  'batteria scollegata': ['f56'],
+  'sensore di corrente guasto': ['f57'],
+  'limitazione potenza': ['w10'],
+  'tensione pv alta': ['w13'],
+  'sovraccarico mppt (fault)': ['w14'],
+  'sovraccarico mppt': ['w14'],
+  'batteria troppo scarica per caricare': ['w12']
+};
+
+function paintDiagnostics(activeFaults) {
+  const box = $('diag-list');
+  if (!box) return;
+  box.replaceChildren();
+  const active = new Set();
+  const unmapped = [];
+  for (const f of activeFaults || []) {
+    const tags = WS_DIAG[String(f).toLowerCase()];
+    if (!tags) unmapped.push(f);
+    for (const tag of tags || []) active.add(tag);
+  }
+  const note = $('diag-unmapped');
+  if (note) {
+    note.hidden = !unmapped.length;
+    note.textContent = unmapped.length ? 'Condizioni attive non coperte dal manuale: ' + unmapped.join('; ') + '.' : '';
+  }
+
+  const items = [];
+  DIAG_FAULTS.forEach((f) => {
+    const codeStr = String(f.code).padStart(2, '0');
+    items.push({ type: 'fault', isAct: active.has('f' + f.code), tag: 'Guasto F' + codeStr, ...f });
+  });
+  DIAG_WARNS.forEach((w) => {
+    const codeStr = String(w.code).padStart(2, '0');
+    items.push({ type: 'warn', isAct: active.has('w' + w.code), tag: 'Avviso W' + codeStr, ...w });
+  });
+
+  items.sort((a, b) => (b.isAct ? 1 : 0) - (a.isAct ? 1 : 0));
+
+  for (const item of items) {
+    const card = document.createElement('article');
+    card.className = 'diag-item' + (item.isAct ? ' active-fault' : '');
+
+    const head = document.createElement('div');
+    head.className = 'diag-head';
+
+    const tag = document.createElement('span');
+    tag.className = 'diag-tag ' + item.type;
+    tag.textContent = (item.isAct ? 'ATTIVO · ' : '') + item.tag;
+
+    const title = document.createElement('span');
+    title.textContent = item.name;
+
+    head.append(tag, title);
+
+    const cause = document.createElement('p');
+    cause.className = 'diag-cause';
+    cause.textContent = item.cause + (item.beep ? ' Segnale: ' + item.beep + '.' : '');
+
+    const action = document.createElement('p');
+    action.className = 'diag-action';
+    action.innerHTML = '<b>Azione consigliata:</b> ' + esc(item.action);
+
+    card.append(head, cause, action);
+    box.append(card);
+  }
 }
 
 function paintSettings(cfg) {
@@ -621,11 +779,29 @@ function paintSettings(cfg) {
     box.replaceChildren();
     for (const k of keys) {
       const row = document.createElement('div');
-      const kk = document.createElement('span'); kk.className = 'k'; kk.textContent = k;
+      const kk = document.createElement('span'); kk.className = 'k';
+      const meta = CFG_META[k];
+      if (meta && meta.prog) {
+        const pSpan = document.createElement('span');
+        pSpan.className = 'k-prog';
+        pSpan.textContent = meta.prog;
+        kk.append(pSpan);
+      }
+      const labelSpan = document.createElement('span');
+      labelSpan.textContent = k;
+      kk.append(labelSpan);
+
       const vv = document.createElement('span'); vv.className = 'v';
       const raw = cfg ? cfg[k] : undefined;
-      vv.textContent = raw === undefined || raw === null ? '–'
+      const valText = raw === undefined || raw === null ? '–'
         : (typeof raw === 'number' ? fmt(raw, Number.isInteger(raw) ? 0 : 1) : String(raw));
+      vv.textContent = valText;
+      if (meta && meta.sub) {
+        const sub = document.createElement('span');
+        sub.className = 'v-sub';
+        sub.textContent = meta.sub;
+        vv.append(sub);
+      }
       row.append(kk, vv);
       box.append(row);
     }
