@@ -41,3 +41,7 @@ htmlcov/
 # --- Log locali ------------------------------------------------------------
 *.log
 
+# --- Documentazione --------------------------------------------------------
+# Il PDF sorgente del manuale non si versiona: vale il Markdown convertito.
+PIP-MS_*.pdf
+

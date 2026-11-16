@@ -50,8 +50,11 @@ solarmon/
 │   ├── solarmon-backup.service / .timer
 │   ├── 99-inverter.rules   # udev: /dev/inverter, gruppo inverter, 0660
 │   └── backup.sh           # backup SQLite con retention
+├── scripts/
+│   └── build_manual_md.py  # rigenera docs/PIP-MS_1-5KVA_manual.md
 ├── tests/                  # pytest con fixture reali redatte
 └── docs/
+    ├── PIP-MS_1-5KVA_manual.md # manuale utente ufficiale convertito (PF1 1K-5K)
     ├── DECISIONS.md       # scelte tecniche e motivazioni
     ├── RUNBOOK.md         # installazione, restore, rotazione token
     └── chat-solarmon-2026-11-13.md  # archivio della chat di progetto
