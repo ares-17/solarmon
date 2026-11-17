@@ -309,6 +309,45 @@ def next_midnight(ts):
     return midnight_of(day_of(ts) + datetime.timedelta(days=1))
 
 
+def band_index(ts):
+    """Indice fascia locale da 4 ore (0=00-04, 1=04-08, ..., 5=20-24)."""
+    return datetime.datetime.fromtimestamp(ts).hour // 4
+
+
+def next_hour(ts):
+    """Timestamp inizio prossima ora locale."""
+    dt = datetime.datetime.fromtimestamp(ts)
+    nxt = datetime.datetime.combine(dt.date(), datetime.time(dt.hour)) + datetime.timedelta(hours=1)
+    res = nxt.timestamp()
+    return res if res > ts else ts + 1
+
+
+def next_band(ts):
+    """Timestamp inizio prossima fascia locale da 4 ore."""
+    dt = datetime.datetime.fromtimestamp(ts)
+    next_band_hour = (dt.hour // 4 + 1) * 4
+    if next_band_hour < 24:
+        nxt = datetime.datetime.combine(dt.date(), datetime.time(next_band_hour))
+    else:
+        nxt = datetime.datetime.combine(dt.date() + datetime.timedelta(days=1), datetime.time(0))
+    res = nxt.timestamp()
+    return res if res > ts else ts + 1
+
+
+def split_interval(start, end, next_boundary):
+    """Divide [start, end] in segmenti contigui ai confini dati da next_boundary."""
+    parts = []
+    a = float(start)
+    b_limit = float(end)
+    while a < b_limit:
+        b = min(b_limit, next_boundary(a))
+        if b <= a:
+            b = b_limit
+        parts.append((a, b))
+        a = b
+    return parts
+
+
 def daily_payload(days=30):
     """Produzione FV per giorno locale, integrata sul tempo reale."""
     since = time.time() - days * 86400

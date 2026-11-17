@@ -4,6 +4,7 @@ Questi test bloccano il comportamento su risposte reali dell'inverter: se un ref
 cambia gli indici dei campi, il test fallisce prima che il dato sbagliato finisca nel DB.
 """
 
+import datetime
 import importlib.util
 import json
 import logging
@@ -228,6 +229,31 @@ def test_prepare_maps_output_priority(solarmon):
 ])
 def test_parse_price(solarmon, raw, expected):
     assert solarmon.parse_price(raw) == expected
+
+
+# --- bucket locali e suddivisione intervalli --------------------------------
+
+
+def _local_ts(day, hour, minute=0):
+    return datetime.datetime.combine(day, datetime.time(hour, minute)).timestamp()
+
+
+def test_band_index_uses_local_four_hour_bands(solarmon):
+    d = datetime.date(2026, 11, 16)
+    assert solarmon.band_index(_local_ts(d, 0)) == 0
+    assert solarmon.band_index(_local_ts(d, 3, 59)) == 0
+    assert solarmon.band_index(_local_ts(d, 4)) == 1
+    assert solarmon.band_index(_local_ts(d, 23, 59)) == 5
+
+
+def test_split_interval_splits_at_hour_boundaries(solarmon):
+    d = datetime.date(2026, 11, 16)
+    start, end = _local_ts(d, 3, 30), _local_ts(d, 5, 10)
+    parts = solarmon.split_interval(start, end, solarmon.next_hour)
+    assert len(parts) == 3
+    assert parts[0] == pytest.approx((_local_ts(d, 3, 30), _local_ts(d, 4)))
+    assert parts[1] == pytest.approx((_local_ts(d, 4), _local_ts(d, 5)))
+    assert parts[2] == pytest.approx((_local_ts(d, 5), _local_ts(d, 5, 10)))
 
 
 # --- posizione solare -------------------------------------------------------
