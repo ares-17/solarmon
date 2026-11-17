@@ -348,6 +348,98 @@ def split_interval(start, end, next_boundary):
     return parts
 
 
+def observed_seconds(raw, since, now, gap=None):
+    """Secondi realmente osservati nella finestra, ignorando i buchi di comunicazione."""
+    limit = gap or max_stored_gap()
+    total = 0.0
+    for prev, cur in zip(raw, raw[1:]):
+        dt = float(cur[0]) - float(prev[0])
+        if not 0 < dt <= limit:
+            continue
+        visible = min(float(now), float(cur[0])) - max(float(since), float(prev[0]))
+        if visible > 0:
+            total += visible
+    return total
+
+
+def energy_totals(energy_input, since, now):
+    """Wh (pv, solar, batt, grid) nella finestra, ritagliando ogni intervallo."""
+    total = [0.0, 0.0, 0.0, 0.0]
+    for start, end, step in energy_rows(energy_input):
+        if start is None:
+            continue
+        span = float(end) - float(start)
+        if span <= 0:
+            continue
+        fraction = (min(float(end), now) - max(float(start), since)) / span
+        if fraction > 0:
+            total = [a + b * fraction for a, b in zip(total, step)]
+    return tuple(total)
+
+
+def band_totals(energy_input, since, now):
+    """Wh [solar, batt, grid] per ciascuna delle sei fasce locali da 4 ore."""
+    totals = [[0.0, 0.0, 0.0] for _ in range(6)]
+    for start, end, step in energy_rows(energy_input):
+        if start is None:
+            continue
+        span = float(end) - float(start)
+        a, b = max(float(start), float(since)), min(float(end), float(now))
+        if span <= 0 or b <= a:
+            continue
+        for sa, sb in split_interval(a, b, next_band):
+            fraction = (sb - sa) / span
+            row = totals[band_index(sa)]
+            row[0] += step[1] * fraction
+            row[1] += step[2] * fraction
+            row[2] += step[3] * fraction
+    return totals
+
+
+def daily_by_source(energy_input, since, now):
+    """kWh al giorno locale per fonte: solar, batt, grid."""
+    buckets = collections.defaultdict(lambda: [0.0, 0.0, 0.0])
+    for start, end, step in energy_rows(energy_input):
+        if start is None:
+            continue
+        span = float(end) - float(start)
+        a, b = max(float(start), float(since)), min(float(end), float(now))
+        if span <= 0 or b <= a:
+            continue
+        for sa, sb in split_interval(a, b, next_midnight):
+            fraction = (sb - sa) / span / 1000.0
+            bucket = buckets[day_of(sa)]
+            for i in range(3):
+                bucket[i] += step[i + 1] * fraction
+    ordered = sorted(buckets)
+    return {"ts": [int(midnight_of(d)) for d in ordered],
+            "solar": [round(buckets[d][0], 3) for d in ordered],
+            "batt": [round(buckets[d][1], 3) for d in ordered],
+            "grid": [round(buckets[d][2], 3) for d in ordered]}
+
+
+def solar_only_profile(raw, since, now, days):
+    """Minuti/giorno per ora locale con carico coperto solo dal FV, senza rete."""
+    seconds = [0.0] * 24
+    limit = max_stored_gap()
+    for prev, cur in zip(raw, raw[1:]):
+        if not solar_only(prev, cur):
+            continue
+        dt = float(cur[0]) - float(prev[0])
+        if not 0 < dt <= limit:
+            continue
+        a, b = max(float(prev[0]), float(since)), min(float(cur[0]), float(now))
+        if b <= a:
+            continue
+        for sa, sb in split_interval(a, b, next_hour):
+            seconds[datetime.datetime.fromtimestamp(sa).hour] += sb - sa
+    total = sum(seconds)
+    minutes = [round(s / 60.0 / days, 1) if days > 0 else 0.0 for s in seconds]
+    observed = observed_seconds(raw, since, now)
+    pct = round(total / observed * 100.0, 1) if observed > 0 else None
+    return minutes, round(total / 3600.0, 2), pct
+
+
 def daily_payload(days=30):
     """Produzione FV per giorno locale, integrata sul tempo reale."""
     since = time.time() - days * 86400

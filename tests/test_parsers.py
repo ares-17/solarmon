@@ -508,6 +508,48 @@ def test_count_switches_ignores_flapping_and_gaps(solarmon):
     assert solarmon.count_switches(gap, gap=300)[0] == 0
 
 
+def test_observed_seconds_clips_to_window_and_ignores_gaps(solarmon):
+    raw = [(95, 0, 0, 0, "B"), (105, 0, 0, 0, "B"),
+           (115, 0, 0, 0, "B"), (1000, 0, 0, 0, "B")]
+    assert solarmon.observed_seconds(raw, 100, 200, gap=60) == pytest.approx(15)
+    assert solarmon.observed_seconds(raw, 100, 200, gap=5) == 0
+
+
+def test_band_totals_split_energy_at_four_hour_boundary(solarmon, monkeypatch):
+    monkeypatch.setattr(solarmon, "STORE_INTERVAL", 3600)
+    d = datetime.date(2026, 11, 16)
+    start, end = _local_ts(d, 3, 30), _local_ts(d, 4, 30)
+    rows = [(start, 0, 1000, "B", None, None, None, None),
+            (end, 0, 1000, "B", None, None, None, None)]
+    bands = solarmon.band_totals(rows, start, end)
+    assert bands[0][1] == pytest.approx(500)
+    assert bands[1][1] == pytest.approx(500)
+    assert sum(b[1] for b in bands) == pytest.approx(1000)
+
+
+def test_daily_by_source_splits_at_local_midnight(solarmon, monkeypatch):
+    monkeypatch.setattr(solarmon, "STORE_INTERVAL", 3600)
+    d = datetime.date(2026, 11, 16)
+    start = _local_ts(d, 23, 30)
+    end = _local_ts(d + datetime.timedelta(days=1), 0, 30)
+    rows = [(start, 0, 1000, "B", None, None, None, None),
+            (end, 0, 1000, "B", None, None, None, None)]
+    daily = solarmon.daily_by_source(rows, start, end)
+    assert daily["batt"] == pytest.approx([0.5, 0.5], abs=0.01)
+
+
+def test_solar_only_profile_attributes_minutes_to_local_hours(solarmon, monkeypatch):
+    monkeypatch.setattr(solarmon, "STORE_INTERVAL", 3600)
+    d = datetime.date(2026, 11, 16)
+    start = _local_ts(d, 10, 0)
+    end = _local_ts(d, 10, 30)
+    raw = [(start, 800, 500, 0, "B"), (end, 800, 500, 0, "B")]
+    minutes, hours, pct = solarmon.solar_only_profile(raw, start, end, days=0.5)
+    assert minutes[10] == pytest.approx(60)
+    assert hours == pytest.approx(0.5)
+    assert pct == pytest.approx(100)
+
+
 def test_grid_switch_text_to_grid(solarmon):
     assert solarmon.grid_switch_text(True, _gs(batt_v=46.2, batt_pct=18), "L") == \
         "Passato alla rete: batteria al 18% (46,2 V)."
