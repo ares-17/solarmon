@@ -557,6 +557,104 @@ function barChart(svg, ts, values, opts = {}) {
   });
 }
 
+function emptyChart(svg, h, msg) {
+  const { w } = frame(svg, h);
+  empty(svg, w, h, msg);
+}
+
+function stackedBars(svg, labels, series, opts = {}) {
+  const h = opts.height || 220;
+  const { w } = frame(svg, h);
+  const P = { l: 44, r: 10, t: 14, b: 18 };
+  const pw = w - P.l - P.r, ph = h - P.t - P.b;
+  const n = labels.length;
+  const totals = labels.map((_, i) => series.reduce((a, s) => a + (+s.values[i] || 0), 0));
+  if (!n || !totals.some((v) => v > 0)) {
+    empty(svg, w, h, opts.emptyMsg || 'Nessun dato in questo periodo.');
+    return;
+  }
+  const { lo, hi, ticks } = scaleY(0, Math.max(...totals), 4);
+  const Y = (v) => P.t + ph - (v - lo) / (hi - lo) * ph;
+  for (const t of ticks) {
+    const y = Y(t);
+    el('line', { x1: P.l, x2: P.l + pw, y1: y, y2: y, stroke: 'var(--grid)', 'stroke-width': 1 }, svg);
+    txt(svg, P.l - 8, y + 3.5, fmt(t), { 'text-anchor': 'end', fill: 'var(--muted)' });
+  }
+  const slot = pw / n, bw = Math.max(3, Math.min(56, slot - 2)), y0 = Y(0);
+  labels.forEach((_, i) => {
+    const x = P.l + slot * i + (slot - bw) / 2;
+    let acc = 0;
+    for (const s of series) {
+      const v = +s.values[i] || 0;
+      if (v <= 0) continue;
+      const yTop = Y(acc + v), yBottom = Y(acc);
+      el('rect', {
+        x: x.toFixed(1), y: yTop.toFixed(1), width: bw.toFixed(1),
+        height: Math.max(0, yBottom - yTop).toFixed(1), fill: s.color
+      }, svg);
+      acc += v;
+    }
+  });
+  const ix = opts.allLabels ? labels.map((_, i) => i)
+    : [0, Math.floor((n - 1) / 2), n - 1].filter((v, i, a) => a.indexOf(v) === i);
+  for (const i of ix) {
+    const first = i === 0, last = i === n - 1;
+    const x = first ? P.l : last ? P.l + pw : P.l + slot * i + slot / 2;
+    txt(svg, x, h - 4, labels[i],
+      { 'text-anchor': first ? 'start' : last ? 'end' : 'middle', 'font-size': opts.labelSize || 11, fill: 'var(--muted)' });
+  }
+}
+
+function simpleBars(svg, labels, values, opts = {}) {
+  const h = opts.height || 190;
+  const { w } = frame(svg, h);
+  const P = { l: 44, r: 10, t: 14, b: 18 };
+  const pw = w - P.l - P.r, ph = h - P.t - P.b;
+  const vals = values.map((v) => +v || 0), n = labels.length;
+  if (!n || (opts.emptyMsg && !vals.some((v) => v > 0))) {
+    empty(svg, w, h, opts.emptyMsg || 'Nessun dato in questo periodo.');
+    return;
+  }
+  const { lo, hi, ticks } = scaleY(0, Math.max(1, ...vals), 4);
+  const fy = opts.fmtY || fmt;
+  const Y = (v) => P.t + ph - (v - lo) / (hi - lo) * ph;
+  for (const t of ticks) {
+    const y = Y(t);
+    el('line', { x1: P.l, x2: P.l + pw, y1: y, y2: y, stroke: 'var(--grid)', 'stroke-width': 1 }, svg);
+    txt(svg, P.l - 8, y + 3.5, fy(t), { 'text-anchor': 'end', fill: 'var(--muted)' });
+  }
+  const slot = pw / n, bw = Math.max(2, Math.min(30, slot - 2)), y0 = Y(0);
+  vals.forEach((v, i) => {
+    const x = P.l + slot * i + (slot - bw) / 2, y1 = Y(v);
+    el('rect', {
+      x: x.toFixed(1), y: y1.toFixed(1), width: bw.toFixed(1),
+      height: Math.max(0, y0 - y1).toFixed(1), fill: opts.color || 'var(--accent)'
+    }, svg);
+  });
+  if (opts.ref && opts.ref.value >= lo && opts.ref.value <= hi) {
+    const y = Y(opts.ref.value);
+    el('line', { x1: P.l, x2: P.l + pw, y1: y, y2: y, stroke: 'var(--control)', 'stroke-width': 1, 'stroke-dasharray': '2 3' }, svg);
+    txt(svg, P.l + pw, y - 5, opts.ref.label, { 'text-anchor': 'end', 'font-size': 10, fill: 'var(--muted)' });
+  }
+  let ix = opts.xticks;
+  if (!ix) {
+    const maxLabels = Math.max(2, Math.floor(pw / 80));
+    if (n <= maxLabels) ix = labels.map((_, i) => i);
+    else {
+      ix = [];
+      const step = Math.ceil((n - 1) / (maxLabels - 1));
+      for (let i = 0; i < n; i += step) ix.push(i);
+      if (ix[ix.length - 1] !== n - 1) ix.push(n - 1);
+    }
+  }
+  for (const i of ix) {
+    if (!labels[i]) continue;
+    const first = i === 0, last = i === n - 1;
+    const x = first ? P.l : last ? P.l + pw : P.l + slot * i + slot / 2;
+    txt(svg, x, h - 4, labels[i], { 'text-anchor': first ? 'start' : last ? 'end' : 'middle', fill: 'var(--muted)' });
+  }
+}
+
 /* ---------- dati ---------- */
 const battPower = (gs) => (Number(gs.chg_a) > 0.2 ? Number(gs.batt_v) * Number(gs.chg_a)
   : Number(gs.dis_a) > 0.2 ? -Number(gs.batt_v) * Number(gs.dis_a) : 0);
@@ -856,22 +954,49 @@ function applyPeriodLayout() {
   $('row3').classList.toggle('two', period);
 }
 
+function paintAnalyticsCharts(narrow) {
+  const d = ANA, t = d.totals || {}, sw = d.switches || {};
+  const noData = d.days === 0, noLoad = +t.load_kwh === 0;
+  const bandsMsg = noData ? 'Nessun dato in questo periodo.' : 'Nessun consumo nel periodo.';
+  if (noData || noLoad) {
+    emptyChart($('c-bands'), narrow ? 190 : 230, bandsMsg);
+  } else {
+    stackedBars($('c-bands'), d.bands.map((b) => b.label), [
+      { values: d.bands.map((b) => b.solar_kwh), color: 'var(--mix-solar)' },
+      { values: d.bands.map((b) => b.batt_kwh), color: 'var(--mix-batt)' },
+      { values: d.bands.map((b) => b.grid_kwh), color: 'var(--mix-grid)' }
+    ], { height: narrow ? 190 : 230, allLabels: true, labelSize: narrow ? 10 : 11, emptyMsg: bandsMsg });
+  }
+  const pct = t.solar_only_pct != null ? fmt(t.solar_only_pct, 1) + '%' : '–';
+  simpleBars($('c-solo'), Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')),
+    d.solar_only.minutes_per_day, {
+      height: narrow ? 170 : 200, color: 'var(--accent)', fmtY: (v) => fmt(v),
+      emptyMsg: 'Nessun intervallo osservato.', xticks: [0, 6, 12, 18, 23]
+    });
+  $('cap-solo').textContent = 'Solo FV e senza rete: carico coperto dai pannelli, batteria non necessaria. '
+    + fmt(t.solar_only_hours, 1) + ' h nel periodo, ' + pct + ' del tempo osservato.';
+  simpleBars($('c-switch'), sw.days.map((x) => dayLbl(x.ts)), sw.days.map((x) => x.count), {
+    height: narrow ? 160 : 190, color: 'var(--text)',
+    ref: sw.per_day != null ? { value: sw.per_day, label: 'media ' + fmt(sw.per_day, 1) } : null
+  });
+  $('cap-switch').textContent = 'Cambi confermati da 3 campioni consecutivi (≈3 min); linea tratteggiata = media. '
+    + (sw.per_day != null ? 'Media ' + fmt(sw.per_day, 1) + ' al giorno.' : 'Nessun cambio nel periodo.');
+}
+
 function paintAnalytics(narrow) {
   const ids = ['a-load', 'a-pv', 'a-self', 'a-grid', 'a-switch', 'a-solo'];
   const set = (id, value, sub = '') => { $(id).textContent = value; $(id + '-sub').textContent = sub; };
   const metas = { 'a-bands-meta': '–', 'a-solo-meta': '–', 'a-switch-meta': '–' };
   const note = $('a-cost-note');
   note.hidden = true;
-  if (ANA_ERR) {
-    for (const id of ids) set(id, '–');
-    $('a-meta').textContent = 'dati non disponibili';
-    for (const id in metas) $(id).textContent = 'dati non disponibili';
-    return;
-  }
   if (!ANA) {
+    const msg = ANA_ERR ? 'dati non disponibili' : 'caricamento…';
     for (const id of ids) set(id, '–');
-    $('a-meta').textContent = 'caricamento…';
-    for (const id in metas) $(id).textContent = '–';
+    $('a-meta').textContent = msg;
+    for (const id in metas) $(id).textContent = msg;
+    emptyChart($('c-bands'), narrow ? 190 : 230, msg);
+    emptyChart($('c-solo'), narrow ? 170 : 200, msg);
+    emptyChart($('c-switch'), narrow ? 160 : 190, msg);
     return;
   }
   const d = ANA, t = d.totals || {}, sw = d.switches || {};
@@ -884,6 +1009,11 @@ function paintAnalytics(narrow) {
     set('a-solo', '–');
     $('a-meta').textContent = 'nessun dato nel periodo';
     for (const id in metas) $(id).textContent = 'nessun dato';
+    if (ANA_ERR) {
+      $('a-meta').textContent = 'dati non disponibili';
+      for (const id in metas) $(id).textContent = 'dati non disponibili';
+    }
+    paintAnalyticsCharts(narrow);
     return;
   }
   const price = d.price_eur_kwh != null && H === 720;
@@ -905,6 +1035,11 @@ function paintAnalytics(narrow) {
   metas['a-solo-meta'] = fmt(t.solar_only_hours, 1) + ' h · ' + fmt(t.solar_only_pct, 1) + '% del tempo';
   metas['a-switch-meta'] = fmt(sw.total, 0) + ' cambi in ' + fmt(d.days, 1) + ' giorni';
   for (const id in metas) $(id).textContent = metas[id];
+  if (ANA_ERR) {
+    $('a-meta').textContent = 'dati non disponibili';
+    for (const id in metas) $(id).textContent = 'dati non disponibili';
+  }
+  paintAnalyticsCharts(narrow);
   if (price) {
     note.textContent = 'Stima indicativa: prezzo applicato ai soli prelievi di rete; non include le ricariche da rete.';
     note.hidden = false;
@@ -1021,6 +1156,37 @@ function paintVoltage(cfg, narrow) {
 }
 
 function paintDaily(narrow) {
+  if (H > 24) {
+    const height = narrow ? 168 : 186;
+    $('cap-day').textContent = 'Energia consumata ogni giorno, divisa per fonte.';
+    if (!ANA) {
+      const msg = ANA_ERR ? 'dati non disponibili' : 'caricamento…';
+      $('d-meta').textContent = msg;
+      emptyChart($('c-day'), height, msg);
+      return;
+    }
+    if (ANA.days === 0) {
+      $('d-meta').textContent = ANA_ERR ? 'dati non disponibili' : 'nessun dato';
+      emptyChart($('c-day'), height, ANA_ERR ? 'dati non disponibili' : 'Nessun dato in questo periodo.');
+      return;
+    }
+    const totals = ANA.totals || {}, daily = ANA.daily || {};
+    if (+totals.load_kwh === 0) {
+      $('d-meta').textContent = 'nessun consumo';
+      emptyChart($('c-day'), height, 'Nessun consumo nel periodo.');
+      return;
+    }
+    const solar = daily.solar || [], batt = daily.batt || [], grid = daily.grid || [];
+    const total = solar.concat(batt).concat(grid).reduce((a, v) => a + (+v || 0), 0);
+    $('d-meta').textContent = fmt(total, 1) + ' kWh nel periodo';
+    stackedBars($('c-day'), (daily.ts || []).map(dayLbl), [
+      { values: solar, color: 'var(--mix-solar)' },
+      { values: batt, color: 'var(--mix-batt)' },
+      { values: grid, color: 'var(--mix-grid)' }
+    ], { height });
+    if (ANA_ERR) $('d-meta').textContent = 'dati non disponibili';
+    return;
+  }
   if (!DAY || !DAY.ts || !DAY.ts.length) return;
   const kwh = DAY.kwh || [];
   const total = kwh.reduce((a, b) => a + (+b || 0), 0);
@@ -1090,7 +1256,10 @@ document.querySelectorAll('.seg button').forEach((b) => {
       H = next;
       ANA = null; ANA_H = null; ANA_ERR = false;
       applyPeriodLayout();
-      if (H > 24) paintAnalytics(window.innerWidth < 640);
+      if (H > 24) {
+        paintAnalytics(window.innerWidth < 640);
+        paintDaily(window.innerWidth < 640);
+      }
     }
     document.querySelectorAll('.seg button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
     load();
