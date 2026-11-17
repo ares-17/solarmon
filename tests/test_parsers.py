@@ -474,6 +474,40 @@ def test_grid_on_requires_line_mode_and_ac(solarmon):
     assert solarmon.grid_on(_gs(grid_v=230), "B") is False
 
 
+def test_solar_only_requires_no_grid_and_pv_covering_load(solarmon):
+    ok = (0, 500.0, 500.0, 0.0, "B")
+    assert solarmon.solar_only(ok, ok) is True
+    assert solarmon.solar_only((0, 500.0, 540.0, 0.0, "B"),
+                               (0, 500.0, 540.0, 0.0, "B")) is True
+    assert solarmon.solar_only((0, 500.0, 600.0, 0.0, "B"),
+                               (0, 500.0, 600.0, 0.0, "B")) is False
+    assert solarmon.solar_only((0, 500.0, 560.0, 0.0, "B"),
+                               (0, 500.0, 560.0, 0.0, "B")) is False
+    assert solarmon.solar_only((0, 500.0, 500.0, 230.0, "L"),
+                               (0, 500.0, 500.0, 230.0, "L")) is False
+    assert solarmon.solar_only((0, 0.0, 0.0, 0.0, "B"),
+                               (0, 0.0, 0.0, 0.0, "B")) is False
+
+
+def test_count_switches_requires_three_consecutive_samples(solarmon):
+    t = 1_700_000_000
+    rows = [(t, 0.0, "B"), (t + 60, 230.0, "L"), (t + 120, 230.0, "L"),
+            (t + 180, 230.0, "L"), (t + 240, 0.0, "B")]
+    total, by_day = solarmon.count_switches(rows)
+    assert total == 1
+    assert sum(by_day.values()) == 1
+
+
+def test_count_switches_ignores_flapping_and_gaps(solarmon):
+    t = 1_700_000_000
+    flapping = [(t, 0.0, "B"), (t + 60, 230.0, "L"), (t + 120, 0.0, "B"),
+                (t + 180, 230.0, "L"), (t + 240, 0.0, "B")]
+    assert solarmon.count_switches(flapping)[0] == 0
+    gap = [(t, 0.0, "B"), (t + 60, 230.0, "L"), (t + 120, 230.0, "L"),
+           (t + 4000, 230.0, "L"), (t + 4060, 230.0, "L")]
+    assert solarmon.count_switches(gap, gap=300)[0] == 0
+
+
 def test_grid_switch_text_to_grid(solarmon):
     assert solarmon.grid_switch_text(True, _gs(batt_v=46.2, batt_pct=18), "L") == \
         "Passato alla rete: batteria al 18% (46,2 V)."

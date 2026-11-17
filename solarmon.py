@@ -486,8 +486,52 @@ def _finite(v):
         return False
 
 
+def is_on_grid(grid_v, mode):
+    return mode == "L" and _finite(grid_v) and float(grid_v) > GRID_MIN_V
+
+
 def grid_on(gs, mode):
-    return mode == "L" and _finite(gs.get("grid_v")) and float(gs["grid_v"]) > GRID_MIN_V
+    return is_on_grid(gs.get("grid_v"), mode)
+
+
+def solar_only(prev, cur):
+    """Carico coperto dai pannelli senza rete, con tolleranza di 50 W."""
+
+    def ok(row):
+        _, pv_w, out_w, grid_v, mode = row
+        return (not is_on_grid(grid_v, mode) and _finite(pv_w) and float(pv_w) > 0
+                and _finite(out_w) and float(out_w) > 0
+                and float(pv_w) >= float(out_w) - 50)
+
+    return ok(prev) and ok(cur)
+
+
+def count_switches(rows, gap=None):
+    """Cambi batteria->rete confermati da GRID_CONFIRM campioni consecutivi."""
+    total, by_day = 0, collections.defaultdict(int)
+    if not rows:
+        return total, {}
+    limit = gap or max_stored_gap()
+    prev_ts, prev_grid, prev_mode = rows[0]
+    confirmed = is_on_grid(prev_grid, prev_mode)
+    candidate, count = None, 0
+    for ts, grid_v, mode in rows[1:]:
+        state = is_on_grid(grid_v, mode)
+        dt, prev_ts = ts - prev_ts, ts
+        if dt > limit:
+            confirmed, candidate, count = state, None, 0
+            continue
+        if state == confirmed:
+            candidate, count = None, 0
+            continue
+        count = count + 1 if state == candidate else 1
+        candidate = state
+        if count >= GRID_CONFIRM:
+            if state:
+                total += 1
+                by_day[day_of(ts)] += 1
+            confirmed, candidate, count = state, None, 0
+    return total, dict(by_day)
 
 
 def grid_switch_text(new_on_grid, gs, mode):
