@@ -297,6 +297,78 @@ def mix_payload(h):
             "to": visible[-1][0] if visible else None}
 
 
+def analytics_payload(h, now=None):
+    """Analisi del periodo: fasce, solo FV, cambi, energia al giorno e costi."""
+    now = time.time() if now is None else float(now)
+    since = now - h * 3600
+    with closing(connect()) as con:
+        rows = con.execute(
+            "SELECT ts,pv_w,out_w,grid_v,mode,%s FROM samples WHERE ts>? ORDER BY ts"
+            % ",".join(ENERGY_COLS), (since - max_stored_gap(),)).fetchall()
+    raw = [(ts, pv, out, grid_v, mode) for ts, pv, out, grid_v, mode, *_ in rows]
+    energy_input = [(ts, pv, out, mode, e_pv, e_solar, e_batt, e_grid)
+                    for ts, pv, out, _grid_v, mode, e_pv, e_solar, e_batt, e_grid in rows]
+
+    observed = observed_seconds(raw, since, now)
+    days = round(observed / 86400.0, 2)
+    if observed > 0 and days == 0:  # finestre corte: non azzerare il denominatore
+        days = round(observed / 86400.0, 8)
+
+    e_pv, e_solar, e_batt, e_grid = energy_totals(energy_input, since, now)
+    pv_kwh, solar_kwh, batt_kwh, grid_kwh = (x / 1000.0 for x in (e_pv, e_solar, e_batt, e_grid))
+    load_kwh = solar_kwh + batt_kwh + grid_kwh
+    self_sufficiency = round((solar_kwh + batt_kwh) / load_kwh * 100.0, 1) if load_kwh > 0 else None
+
+    minutes, solo_hours, solo_pct = solar_only_profile(raw, since, now, days)
+    bands = []
+    band_energy = band_totals(energy_input, since, now)
+    for i, (solar, batt, grid) in enumerate(band_energy):
+        start = i * 4
+        row = {"start": start, "label": "%02d–%02d" % (start, start + 4)}
+        for key, wh in (("solar_kwh", solar), ("batt_kwh", batt), ("grid_kwh", grid)):
+            row[key] = round(wh / 1000.0 / days, 3) if days > 0 else 0.0
+        bands.append(row)
+
+    visible_days = sorted({day_of(ts) for ts, *_ in raw if ts >= since})
+    daily = daily_by_source(energy_input, since, now)
+    by_ts = dict(zip(daily["ts"], zip(daily["solar"], daily["batt"], daily["grid"])))
+    daily_out = {"ts": [], "solar": [], "batt": [], "grid": []}
+    for d in visible_days:
+        ts_midnight = int(midnight_of(d))
+        solar, batt, grid = by_ts.get(ts_midnight, (0.0, 0.0, 0.0))
+        daily_out["ts"].append(ts_midnight)
+        daily_out["solar"].append(solar)
+        daily_out["batt"].append(batt)
+        daily_out["grid"].append(grid)
+
+    switch_rows = [(ts, grid_v, mode) for ts, _pv, _out, grid_v, mode in raw]
+    pre = [r for r in switch_rows if r[0] < since]
+    total, by_day = count_switches(([pre[-1]] if pre else []) + [r for r in switch_rows if r[0] >= since])
+    per_day = round(total / days, 1) if days > 0 else None
+    switch_days = [{"ts": int(midnight_of(d)), "count": by_day.get(d, 0)} for d in visible_days]
+
+    if GRID_PRICE is None or days == 0:
+        grid_cost = covered_value = None
+    else:
+        grid_cost = round(grid_kwh * GRID_PRICE, 2)
+        covered_value = round((solar_kwh + batt_kwh) * GRID_PRICE, 2)
+
+    return {
+        "h": h, "from": int(since), "to": int(now), "days": days, "price_eur_kwh": GRID_PRICE,
+        "totals": {
+            "load_kwh": round(load_kwh, 3), "pv_kwh": round(pv_kwh, 3),
+            "solar_kwh": round(solar_kwh, 3), "batt_kwh": round(batt_kwh, 3),
+            "grid_kwh": round(grid_kwh, 3), "self_sufficiency": self_sufficiency,
+            "grid_cost_eur": grid_cost, "covered_value_eur": covered_value,
+            "solar_only_hours": solo_hours, "solar_only_pct": solo_pct,
+        },
+        "bands": bands,
+        "solar_only": {"minutes_per_day": minutes, "hours": solo_hours, "pct": solo_pct},
+        "switches": {"days": switch_days, "total": total, "per_day": per_day},
+        "daily": daily_out,
+    }
+
+
 def day_of(ts):
     return datetime.date.fromtimestamp(ts)
 
@@ -850,6 +922,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.out(sun_payload(qint(q, "h", 24, 1, 24 * 365)))
             elif u.path == "/api/mix":
                 self.out(mix_payload(qint(q, "h", 24, 1, 24 * 365)))
+            elif u.path == "/api/analytics":
+                self.out(analytics_payload(qint(q, "h", 24, 1, 24 * 365)))
             elif u.path == "/api/daily":
                 self.out(daily_payload())
             else:

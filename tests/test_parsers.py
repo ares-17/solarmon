@@ -665,3 +665,80 @@ def test_legacy_alerts_are_removed(solarmon):
         assert needle not in src
 
 
+
+
+# --- analisi del periodo ----------------------------------------------------
+
+
+def _insert_analytics(con, rows):
+    for ts, pv, out, grid, mode, e in rows:
+        con.execute("INSERT INTO samples(ts,pv_w,out_w,grid_v,mode,"
+                    "e_pv_wh,e_solar_wh,e_batt_wh,e_grid_wh) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (ts, pv, out, grid, mode, *e))
+
+
+def test_analytics_empty_database_contract(db, server):
+    with closing(urllib.request.urlopen(server + "/api/analytics?h=168", timeout=5)) as r:
+        body = json.load(r)
+    assert body["days"] == 0
+    assert body["totals"]["load_kwh"] == 0
+    assert body["totals"]["self_sufficiency"] is None
+    assert body["totals"]["grid_cost_eur"] is None
+    assert body["switches"]["per_day"] is None
+    assert len(body["bands"]) == 6
+    assert len(body["solar_only"]["minutes_per_day"]) == 24
+    assert body["switches"]["days"] == [] and body["daily"]["ts"] == []
+
+
+def test_analytics_totals_bands_and_days(db, server, monkeypatch):
+    monkeypatch.setattr(db, "STORE_INTERVAL", 3600)  # righe orarie nel test
+    now = int(time.time())
+    since = now - 7 * 86400
+    con = db.connect()
+    rows = []
+    for i in range(-1, 7 * 24 + 1):
+        ts = since + i * 3600
+        rows.append((ts, 1000, 1000, 0, "B", (1000, 1000, 500, 500)))
+    _insert_analytics(con, rows)
+    con.commit()
+    con.close()
+    monkeypatch.setattr(db, "GRID_PRICE", 0.25)
+    with closing(urllib.request.urlopen(server + "/api/analytics?h=168", timeout=5)) as r:
+        body = json.load(r)
+    assert body["days"] == pytest.approx(7, abs=0.1)
+    assert body["totals"]["solar_kwh"] == pytest.approx(168, abs=1)
+    assert body["totals"]["batt_kwh"] == pytest.approx(84, abs=1)
+    assert body["totals"]["grid_kwh"] == pytest.approx(84, abs=1)
+    assert body["totals"]["load_kwh"] == pytest.approx(336, abs=2)
+    assert body["totals"]["self_sufficiency"] == pytest.approx(75, abs=0.2)
+    assert body["totals"]["grid_cost_eur"] == pytest.approx(21, abs=0.2)
+    assert body["totals"]["covered_value_eur"] == pytest.approx(63, abs=0.2)
+    assert len(body["bands"]) == 6
+    assert sum(b["solar_kwh"] + b["batt_kwh"] + b["grid_kwh"] for b in body["bands"]) \
+        == pytest.approx(body["totals"]["load_kwh"] / body["days"], abs=0.01)
+    assert len(body["daily"]["ts"]) == 8
+    assert sum(body["daily"]["solar"]) + sum(body["daily"]["batt"]) \
+        + sum(body["daily"]["grid"]) == pytest.approx(body["totals"]["load_kwh"], abs=0.1)
+
+
+def test_analytics_switches_end_to_end(db, server, monkeypatch):
+    now = int(time.time())
+    base = now - 10 * 60
+    con = db.connect()
+    _insert_analytics(con, [
+        (base, 0, 0, 0, "B", (0, 0, 0, 0)),
+        (base + 60, 0, 0, 230, "L", (0, 0, 0, 100)),
+        (base + 120, 0, 0, 230, "L", (0, 0, 0, 100)),
+        (base + 180, 0, 0, 230, "L", (0, 0, 0, 100)),
+    ])
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/analytics?h=1", timeout=5)) as r:
+        body = json.load(r)
+    assert body["switches"]["total"] == 1
+    assert body["switches"]["per_day"] == pytest.approx(1 / body["days"], abs=0.01)
+
+
+def test_analytics_invalid_h_uses_default(db, server):
+    with closing(urllib.request.urlopen(server + "/api/analytics?h=abc", timeout=5)) as r:
+        assert json.load(r)["h"] == 24
