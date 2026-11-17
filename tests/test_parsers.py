@@ -742,3 +742,24 @@ def test_analytics_switches_end_to_end(db, server, monkeypatch):
 def test_analytics_invalid_h_uses_default(db, server):
     with closing(urllib.request.urlopen(server + "/api/analytics?h=abc", timeout=5)) as r:
         assert json.load(r)["h"] == 24
+
+
+# --- dashboard: analisi del periodo ----------------------------------------
+
+
+def test_dashboard_has_analytics_markup():
+    html = (ROOT / "index.html").read_text()
+    for needle in ('id="flow"', 'id="row3"', 'id="panel-batt"', 'id="analytics"',
+                   'id="a-load"', 'id="a-pv"', 'id="a-self"', 'id="a-grid"',
+                   'id="a-switch"', 'id="a-solo"', 'id="c-bands"', 'id="c-solo"',
+                   'id="c-switch"', 'api/analytics'):
+        assert needle in html
+
+
+def test_dashboard_script_parses(tmp_path):
+    import subprocess
+    html = (ROOT / "index.html").read_text()
+    script = html.split("<script>", 1)[1].split("</script>", 1)[0]
+    path = tmp_path / "dashboard.js"
+    path.write_text(script)
+    subprocess.run(["node", "--check", str(path)], check=True)

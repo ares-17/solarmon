@@ -105,6 +105,12 @@ h1{font-size:var(--fs-title);line-height:1.2;font-weight:600;letter-spacing:-.02
 .mix-inline i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
 .mix .meta{font-size:13px}
 .row3{display:grid;gap:var(--gap)}
+.kpis{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:4px}
+.kpi{padding:10px 12px;border:1px solid var(--rule);border-radius:var(--r-ctl);background:var(--raised);min-width:0}
+.kpi-k{margin:0;font-size:12px;color:var(--muted)}
+.kpi-v{margin:2px 0 0;font-size:22px;font-weight:600;letter-spacing:-.02em;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi-s{margin:2px 0 0;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+.cost-note{margin:10px 0 0;font-size:12px;color:var(--muted)}
 .panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:15px 20px 16px;min-width:0}
 .p-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;min-height:26px}
 .p-head h2{font-size:var(--fs-sec);font-weight:600;letter-spacing:-.01em}
@@ -158,11 +164,14 @@ figcaption{margin-top:6px;font-size:13px;color:var(--muted)}
 
 @media (min-width:640px){
   .node-batt{border-top:1px solid var(--rule);padding-top:11px;margin-top:2px}
+  .kpis{grid-template-columns:repeat(3,1fr)}
 }
 @media (min-width:900px){
   .grid{gap:16px}
   .row3{grid-template-columns:repeat(3,1fr)}
   .row3 .panel{min-height:308px}
+  .row3.two{grid-template-columns:repeat(2,1fr)}
+  .kpis{grid-template-columns:repeat(6,1fr)}
   .flow-top{grid-template-columns:1fr minmax(84px,.8fr) 1fr minmax(84px,.8fr) 1fr;gap:16px}
   .flow-link{display:flex}
   .node-batt{display:flex;align-items:baseline;gap:6px 14px}
@@ -236,7 +245,7 @@ figcaption{margin-top:6px;font-size:13px;color:var(--muted)}
     </div>
   </div>
 
-  <div class="flow" role="group" aria-label="Flusso di potenza adesso">
+  <div class="flow" id="flow" role="group" aria-label="Flusso di potenza adesso">
     <div class="flow-top">
       <div class="node">
         <p class="k">FV</p>
@@ -281,6 +290,36 @@ figcaption{margin-top:6px;font-size:13px;color:var(--muted)}
     </div>
   </section>
 
+  <div class="grid" id="analytics" hidden>
+    <section class="panel" aria-labelledby="h-analytics">
+      <div class="p-head"><h2 id="h-analytics">Analisi del periodo</h2><p class="meta" id="a-meta">–</p></div>
+      <div class="kpis" role="group" aria-label="Indicatori del periodo">
+        <div class="kpi"><p class="kpi-k">Consumo</p><p class="kpi-v" id="a-load">–</p><p class="kpi-s" id="a-load-sub"></p></div>
+        <div class="kpi"><p class="kpi-k">FV prodotto</p><p class="kpi-v" id="a-pv">–</p><p class="kpi-s" id="a-pv-sub"></p></div>
+        <div class="kpi"><p class="kpi-k">Autosufficienza</p><p class="kpi-v" id="a-self">–</p><p class="kpi-s" id="a-self-sub"></p></div>
+        <div class="kpi"><p class="kpi-k">Prelievo rete</p><p class="kpi-v" id="a-grid">–</p><p class="kpi-s" id="a-grid-sub"></p></div>
+        <div class="kpi"><p class="kpi-k">Cambi/giorno</p><p class="kpi-v" id="a-switch">–</p><p class="kpi-s" id="a-switch-sub"></p></div>
+        <div class="kpi"><p class="kpi-k">Solo FV</p><p class="kpi-v" id="a-solo">–</p><p class="kpi-s" id="a-solo-sub"></p></div>
+      </div>
+      <p class="cost-note" id="a-cost-note" hidden></p>
+    </section>
+    <section class="panel" aria-labelledby="h-bands">
+      <div class="p-head"><h2 id="h-bands">Consumo per fasce orarie</h2><p class="meta" id="a-bands-meta">–</p></div>
+      <figure><svg class="chart" id="c-bands" role="img" aria-labelledby="cap-bands"></svg>
+        <figcaption id="cap-bands">Media giornaliera sui giorni osservati; i totali sono nei KPI.</figcaption></figure>
+    </section>
+    <section class="panel" aria-labelledby="h-solo">
+      <div class="p-head"><h2 id="h-solo">Solo FV, senza rete</h2><p class="meta" id="a-solo-meta">–</p></div>
+      <figure><svg class="chart" id="c-solo" role="img" aria-labelledby="cap-solo"></svg>
+        <figcaption id="cap-solo">Minuti al giorno per ora locale in cui il carico era coperto dai pannelli, senza rete.</figcaption></figure>
+    </section>
+    <section class="panel" aria-labelledby="h-switch">
+      <div class="p-head"><h2 id="h-switch">Cambi batteria → rete</h2><p class="meta" id="a-switch-meta">–</p></div>
+      <figure><svg class="chart" id="c-switch" role="img" aria-labelledby="cap-switch"></svg>
+        <figcaption id="cap-switch">Cambi confermati da 3 campioni consecutivi (≈3 min); linea tratteggiata = media.</figcaption></figure>
+    </section>
+  </div>
+
   <div class="grid">
     <section class="panel" aria-labelledby="h-prod">
       <div class="p-head">
@@ -297,8 +336,8 @@ figcaption{margin-top:6px;font-size:13px;color:var(--muted)}
       </figure>
     </section>
 
-    <div class="row3">
-      <section class="panel batt" aria-labelledby="h-batt">
+    <div class="row3" id="row3">
+      <section class="panel batt" id="panel-batt" aria-labelledby="h-batt">
         <div class="p-head"><h2 id="h-batt">Batteria</h2><span class="state" id="b-state"><i></i><span>–</span></span></div>
         <p class="soc"><b id="b-soc">–</b><span>% carica</span></p>
         <div class="track" aria-hidden="true"><i id="b-track" style="width:0"></i></div>
@@ -369,7 +408,8 @@ const $ = (id) => document.getElementById(id);
 const RANGE = { 24: 'ultime 24 ore', 168: 'ultimi 7 giorni', 720: 'ultimi 30 giorni' };
 const USABLE_KWH = 4.8 * 0.5;
 let H = 24, NOW = null, SER = null, DAY = null, MIX = null, SUN = null,
-  MIX_ERR = false, SUN_ERR = false, busy = false, timer = 0;
+  MIX_ERR = false, SUN_ERR = false, busy = false, timer = 0,
+  ANA = null, ANA_H = null, ANA_ERR = false;
 
 const fmt = (v, d = 0) => (v === null || v === undefined || !Number.isFinite(+v)) ? '–'
   : new Intl.NumberFormat('it-IT', { useGrouping: true, minimumFractionDigits: d, maximumFractionDigits: d }).format(+v);
@@ -808,12 +848,76 @@ function paintSettings(cfg) {
   }
 }
 
+function applyPeriodLayout() {
+  const period = H > 24;
+  $('flow').hidden = period;
+  $('panel-batt').hidden = period;
+  $('analytics').hidden = !period;
+  $('row3').classList.toggle('two', period);
+}
+
+function paintAnalytics(narrow) {
+  const ids = ['a-load', 'a-pv', 'a-self', 'a-grid', 'a-switch', 'a-solo'];
+  const set = (id, value, sub = '') => { $(id).textContent = value; $(id + '-sub').textContent = sub; };
+  const metas = { 'a-bands-meta': '–', 'a-solo-meta': '–', 'a-switch-meta': '–' };
+  const note = $('a-cost-note');
+  note.hidden = true;
+  if (ANA_ERR) {
+    for (const id of ids) set(id, '–');
+    $('a-meta').textContent = 'dati non disponibili';
+    for (const id in metas) $(id).textContent = 'dati non disponibili';
+    return;
+  }
+  if (!ANA) {
+    for (const id of ids) set(id, '–');
+    $('a-meta').textContent = 'caricamento…';
+    for (const id in metas) $(id).textContent = '–';
+    return;
+  }
+  const d = ANA, t = d.totals || {}, sw = d.switches || {};
+  if (d.days === 0) {
+    set('a-load', fmt(0, 1) + ' kWh');
+    set('a-pv', fmt(0, 1) + ' kWh');
+    set('a-grid', fmt(0, 1) + ' kWh');
+    set('a-self', '–');
+    set('a-switch', '–');
+    set('a-solo', '–');
+    $('a-meta').textContent = 'nessun dato nel periodo';
+    for (const id in metas) $(id).textContent = 'nessun dato';
+    return;
+  }
+  const price = d.price_eur_kwh != null && H === 720;
+  const gridPct = t.load_kwh > 0 ? t.grid_kwh / t.load_kwh * 100 : null;
+  const covered = +t.solar_kwh + +t.batt_kwh;
+  set('a-load', fmt(t.load_kwh, 1) + ' kWh',
+    fmt(covered, 1) + ' kWh da FV e batteria' + (price && t.covered_value_eur != null ? ' · ≈ ' + fmt(t.covered_value_eur, 2) + ' €' : ''));
+  set('a-pv', fmt(t.pv_kwh, 1) + ' kWh', 'FV diretto ' + fmt(t.solar_kwh, 1) + ' kWh');
+  set('a-self', t.self_sufficiency != null ? fmt(t.self_sufficiency, 0) + ' %' : '–',
+    'coperto da FV e batteria');
+  set('a-grid', fmt(t.grid_kwh, 1) + ' kWh',
+    (gridPct != null ? fmt(gridPct, 0) + '% del consumo' : '–') +
+    (price && t.grid_cost_eur != null ? ' · ≈ ' + fmt(t.grid_cost_eur, 2) + ' €' : ''));
+  set('a-switch', sw.per_day != null ? fmt(sw.per_day, 1) : '–', fmt(sw.total, 0) + ' cambi totali');
+  set('a-solo', t.solar_only_pct != null ? fmt(t.solar_only_pct, 1) + ' %' : '–',
+    fmt(t.solar_only_hours, 1) + ' h nel periodo');
+  $('a-meta').textContent = fmt(d.days, 1) + ' giorni osservati';
+  metas['a-bands-meta'] = 'kWh/giorno';
+  metas['a-solo-meta'] = fmt(t.solar_only_hours, 1) + ' h · ' + fmt(t.solar_only_pct, 1) + '% del tempo';
+  metas['a-switch-meta'] = fmt(sw.total, 0) + ' cambi in ' + fmt(d.days, 1) + ' giorni';
+  for (const id in metas) $(id).textContent = metas[id];
+  if (price) {
+    note.textContent = 'Stima indicativa: prezzo applicato ai soli prelievi di rete; non include le ricariche da rete.';
+    note.hidden = false;
+  }
+}
+
 function paintCharts(cfg) {
   if ($('overview').hidden) return;
   const narrow = window.innerWidth < 640;
   paintProduct(narrow);
   paintVoltage(cfg, narrow);
   paintDaily(narrow);
+  if (H > 24) paintAnalytics(narrow);
 }
 
 const MIX_KEYS = [['solar', 'FV diretto'], ['batt', 'Batteria'], ['grid', 'Rete']];
@@ -950,12 +1054,18 @@ async function load() {
   busy = true;
   $('refresh').disabled = true;
   try {
-    const [n, s, d, m, u] = await Promise.all([
+    const analytics = H > 24 ? json('/api/analytics?h=' + H).catch(() => null) : Promise.resolve(null);
+    const [n, s, d, m, u, a] = await Promise.all([
       json('/api/now'), json('/api/series?h=' + H), json('/api/daily'),
       json('/api/mix?h=' + H).catch(() => null),
-      json('/api/sun?h=' + H).catch(() => null)
+      json('/api/sun?h=' + H).catch(() => null),
+      analytics
     ]);
     NOW = n; SER = s; DAY = d; MIX = m; SUN = u; MIX_ERR = m === null; SUN_ERR = u === null;
+    if (H > 24) {
+      if (a) { ANA = a; ANA_H = H; ANA_ERR = false; }
+      else { ANA_ERR = true; if (ANA_H !== H) ANA = null; }
+    }
     render();
   } catch (e) {
     const last = NOW && NOW.ts ? ' Ultimo dato ' + clock(NOW.ts) + '.' : '';
@@ -975,7 +1085,13 @@ function schedule() {
 
 document.querySelectorAll('.seg button').forEach((b) => {
   b.addEventListener('click', () => {
-    H = +b.dataset.h;
+    const next = +b.dataset.h;
+    if (next !== H) {
+      H = next;
+      ANA = null; ANA_H = null; ANA_ERR = false;
+      applyPeriodLayout();
+      if (H > 24) paintAnalytics(window.innerWidth < 640);
+    }
     document.querySelectorAll('.seg button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
     load();
   });
@@ -987,6 +1103,7 @@ function route() {
   const settings = location.hash === '#impostazioni';
   $('overview').hidden = settings;
   $('settings').hidden = !settings;
+  applyPeriodLayout();
   if (settings && NOW) paintSettings(NOW.cfg || {});
   if (!settings) paintCharts(NOW ? NOW.cfg || {} : {});
   window.scrollTo(0, 0);
@@ -999,6 +1116,7 @@ new ResizeObserver(() => {
   rz = setTimeout(() => { if (NOW) paintCharts(NOW.cfg || {}); }, 120);
 }).observe($('overview'));
 
+applyPeriodLayout();
 route();
 load();
 schedule();
