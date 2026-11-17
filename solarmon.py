@@ -310,23 +310,24 @@ def analytics_payload(h, now=None):
                     for ts, pv, out, _grid_v, mode, e_pv, e_solar, e_batt, e_grid in rows]
 
     observed = observed_seconds(raw, since, now)
-    days = round(observed / 86400.0, 2)
+    days_exact = observed / 86400.0
+    days = round(days_exact, 2)
     if observed > 0 and days == 0:  # finestre corte: non azzerare il denominatore
-        days = round(observed / 86400.0, 8)
+        days = round(days_exact, 8)
 
     e_pv, e_solar, e_batt, e_grid = energy_totals(energy_input, since, now)
     pv_kwh, solar_kwh, batt_kwh, grid_kwh = (x / 1000.0 for x in (e_pv, e_solar, e_batt, e_grid))
     load_kwh = solar_kwh + batt_kwh + grid_kwh
     self_sufficiency = round((solar_kwh + batt_kwh) / load_kwh * 100.0, 1) if load_kwh > 0 else None
 
-    minutes, solo_hours, solo_pct = solar_only_profile(raw, since, now, days)
+    minutes, solo_hours, solo_pct = solar_only_profile(raw, since, now, days_exact)
     bands = []
     band_energy = band_totals(energy_input, since, now)
     for i, (solar, batt, grid) in enumerate(band_energy):
         start = i * 4
         row = {"start": start, "label": "%02d–%02d" % (start, start + 4)}
         for key, wh in (("solar_kwh", solar), ("batt_kwh", batt), ("grid_kwh", grid)):
-            row[key] = round(wh / 1000.0 / days, 3) if days > 0 else 0.0
+            row[key] = round(wh / 1000.0 / days_exact, 3) if days_exact > 0 else 0.0
         bands.append(row)
 
     visible_days = sorted({day_of(ts) for ts, *_ in raw if ts >= since})
@@ -342,12 +343,11 @@ def analytics_payload(h, now=None):
         daily_out["grid"].append(grid)
 
     switch_rows = [(ts, grid_v, mode) for ts, _pv, _out, grid_v, mode in raw]
-    pre = [r for r in switch_rows if r[0] < since]
-    total, by_day = count_switches(([pre[-1]] if pre else []) + [r for r in switch_rows if r[0] >= since])
-    per_day = round(total / days, 1) if days > 0 else None
+    total, by_day = count_switches(switch_rows, since=since)
+    per_day = round(total / days_exact, 1) if days_exact > 0 else None
     switch_days = [{"ts": int(midnight_of(d)), "count": by_day.get(d, 0)} for d in visible_days]
 
-    if GRID_PRICE is None or days == 0:
+    if GRID_PRICE is None or days_exact == 0:
         grid_cost = covered_value = None
     else:
         grid_cost = round(grid_kwh * GRID_PRICE, 2)
@@ -670,8 +670,12 @@ def solar_only(prev, cur):
     return ok(prev) and ok(cur)
 
 
-def count_switches(rows, gap=None):
-    """Cambi batteria->rete confermati da GRID_CONFIRM campioni consecutivi."""
+def count_switches(rows, gap=None, since=None):
+    """Cambi batteria->rete confermati da GRID_CONFIRM campioni consecutivi.
+
+    Con ``since`` si contano solo le conferme dentro la finestra: le righe
+    precedenti servono a ricostruire lo stato, non a sommarsi al totale.
+    """
     total, by_day = 0, collections.defaultdict(int)
     if not rows:
         return total, {}
@@ -691,7 +695,7 @@ def count_switches(rows, gap=None):
         count = count + 1 if state == candidate else 1
         candidate = state
         if count >= GRID_CONFIRM:
-            if state:
+            if state and (since is None or ts >= since):
                 total += 1
                 by_day[day_of(ts)] += 1
             confirmed, candidate, count = state, None, 0

@@ -304,7 +304,9 @@ figcaption{margin-top:6px;font-size:13px;color:var(--muted)}
       <p class="cost-note" id="a-cost-note" hidden></p>
     </section>
     <section class="panel" aria-labelledby="h-bands">
-      <div class="p-head"><h2 id="h-bands">Consumo per fasce orarie</h2><p class="meta" id="a-bands-meta">–</p></div>
+      <div class="p-head"><h2 id="h-bands">Consumo per fasce orarie</h2>
+        <div class="legend"><span><i style="background:var(--mix-solar)"></i>FV diretto</span><span><i style="background:var(--mix-batt)"></i>Batteria</span><span><i style="background:var(--mix-grid)"></i>Rete</span></div>
+        <p class="meta" id="a-bands-meta">–</p></div>
       <figure><svg class="chart" id="c-bands" role="img" aria-labelledby="cap-bands"></svg>
         <figcaption id="cap-bands">Media giornaliera sui giorni osservati; i totali sono nei KPI.</figcaption></figure>
     </section>
@@ -359,7 +361,9 @@ figcaption{margin-top:6px;font-size:13px;color:var(--muted)}
       </section>
 
       <section class="panel" aria-labelledby="h-day">
-        <div class="p-head"><h2 id="h-day">Energia al giorno</h2><span class="meta" id="d-meta">–</span></div>
+        <div class="p-head"><h2 id="h-day">Energia al giorno</h2>
+          <div class="legend"><span><i style="background:var(--mix-solar)"></i>FV diretto</span><span><i style="background:var(--mix-batt)"></i>Batteria</span><span><i style="background:var(--mix-grid)"></i>Rete</span></div>
+          <span class="meta" id="d-meta">–</span></div>
         <figure>
           <svg class="chart" id="c-day" role="img" aria-labelledby="cap-day"></svg>
           <figcaption id="cap-day">Energia FV prodotta ogni giorno; la barra scura è oggi, ancora parziale.</figcaption>
@@ -997,6 +1001,8 @@ function paintAnalytics(narrow) {
     emptyChart($('c-bands'), narrow ? 190 : 230, msg);
     emptyChart($('c-solo'), narrow ? 170 : 200, msg);
     emptyChart($('c-switch'), narrow ? 160 : 190, msg);
+    $('cap-solo').textContent = 'Minuti al giorno per ora locale in cui il carico era coperto dai pannelli, senza rete.';
+    $('cap-switch').textContent = 'Cambi confermati da 3 campioni consecutivi (≈3 min); linea tratteggiata = media.';
     return;
   }
   const d = ANA, t = d.totals || {}, sw = d.switches || {};
@@ -1187,6 +1193,7 @@ function paintDaily(narrow) {
     if (ANA_ERR) $('d-meta').textContent = 'dati non disponibili';
     return;
   }
+  $('cap-day').textContent = 'Energia FV prodotta ogni giorno; la barra scura è oggi, ancora parziale.';
   if (!DAY || !DAY.ts || !DAY.ts.length) return;
   const kwh = DAY.kwh || [];
   const total = kwh.reduce((a, b) => a + (+b || 0), 0);

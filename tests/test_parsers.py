@@ -744,6 +744,79 @@ def test_analytics_invalid_h_uses_default(db, server):
         assert json.load(r)["h"] == 24
 
 
+def test_analytics_single_sample_has_no_consumption(db, server):
+    now = int(time.time())
+    con = db.connect()
+    _insert_analytics(con, [(now - 60, 500, 500, 0, "B", (0, 0, 0, 0))])
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/analytics?h=168", timeout=5)) as r:
+        body = json.load(r)
+    assert body["days"] == 0
+    assert body["totals"]["load_kwh"] == 0
+    assert body["totals"]["self_sufficiency"] is None
+    assert body["totals"]["grid_cost_eur"] is None
+    assert body["switches"]["per_day"] is None
+    assert sum(body["solar_only"]["minutes_per_day"]) == 0
+    assert all(v == 0 for v in body["daily"]["solar"] + body["daily"]["batt"] + body["daily"]["grid"])
+
+
+def test_analytics_without_price_has_no_cost_even_with_data(db, server, monkeypatch):
+    monkeypatch.setattr(db, "STORE_INTERVAL", 3600)
+    monkeypatch.setattr(db, "GRID_PRICE", None)
+    now = int(time.time())
+    since = now - 2 * 86400
+    con = db.connect()
+    _insert_analytics(con, [
+        (since + i * 3600, 1000, 1000, 0, "B", (1000, 1000, 500, 500))
+        for i in range(0, 2 * 24 + 1)
+    ])
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/analytics?h=48", timeout=5)) as r:
+        body = json.load(r)
+    assert body["days"] > 1
+    assert body["totals"]["load_kwh"] > 0
+    assert body["price_eur_kwh"] is None
+    assert body["totals"]["grid_cost_eur"] is None
+    assert body["totals"]["covered_value_eur"] is None
+
+
+def test_analytics_switch_confirmed_just_inside_window_counts(db, server):
+    now = int(time.time())
+    base = now - 3600  # ~since della finestra da un'ora
+    con = db.connect()
+    _insert_analytics(con, [
+        (base - 150, 0, 0, 0, "B", (0, 0, 0, 0)),
+        (base - 90, 0, 0, 230, "L", (0, 0, 0, 100)),
+        (base - 30, 0, 0, 230, "L", (0, 0, 0, 100)),
+        (base + 30, 0, 0, 230, "L", (0, 0, 0, 100)),
+    ])
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/analytics?h=1", timeout=5)) as r:
+        body = json.load(r)
+    # la conferma (terzo L) cade dentro la finestra: il cambio va contato
+    assert body["switches"]["total"] == 1
+
+
+def test_analytics_ratios_use_exact_observed_days(db, monkeypatch):
+    monkeypatch.setattr(db, "STORE_INTERVAL", 3600)
+    now = 1_800_000_000
+    since = now - 3 * 3600
+    con = db.connect()
+    _insert_analytics(con, [
+        (since + i * 3600, 1000, 1000, 0, "B", (1000, 1000, 0, 0))
+        for i in range(4)
+    ])
+    con.commit()
+    con.close()
+    body = db.analytics_payload(3, now=now)
+    observed_days = 3 * 3600 / 86400.0  # 0,125 giorni, non il 0,12/0,13 mostrato
+    band_total = sum(b["solar_kwh"] + b["batt_kwh"] + b["grid_kwh"] for b in body["bands"])
+    assert band_total == pytest.approx(body["totals"]["load_kwh"] / observed_days, abs=0.01)
+
+
 # --- dashboard: analisi del periodo ----------------------------------------
 
 
@@ -754,6 +827,21 @@ def test_dashboard_has_analytics_markup():
                    'id="a-switch"', 'id="a-solo"', 'id="c-bands"', 'id="c-solo"',
                    'id="c-switch"', 'api/analytics'):
         assert needle in html
+
+
+def test_dashboard_analytics_regressions_are_locked():
+    html = (ROOT / "index.html").read_text()
+    # il 24 ore ripristina la sua didascalia dopo una visita a 7/30 giorni
+    assert html.count("Energia FV prodotta ogni giorno; la barra scura è oggi, ancora parziale.") >= 2
+    # un errore di periodo non lascia le didascalie del periodo precedente
+    assert html.count("Minuti al giorno per ora locale in cui il carico era coperto dai pannelli, senza rete.") >= 2
+    assert html.count("Cambi confermati da 3 campioni consecutivi (≈3 min); linea tratteggiata = media.") >= 2
+    # legenda esplicita (il colore non è l'unico indicatore) su entrambi i grafici a barre impilate
+    for anchor in ('id="h-bands"', 'id="h-day"'):
+        block = html.split(anchor, 1)[1].split("</section>", 1)[0]
+        assert 'class="legend"' in block
+        for label in ("FV diretto", "Batteria", "Rete"):
+            assert label in block
 
 
 def test_dashboard_script_parses(tmp_path):
