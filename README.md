@@ -117,6 +117,7 @@ Principi applicati (dettaglio in `docs/DECISIONS.md`):
   e alimentano i kWh, integrati sul tempo reale a ogni lettura (non su `STORE_INTERVAL`).
 - **SD card**: log su RAM (`log2ram`), database su supporto esterno consigliato, backup giornaliero.
 - **Ripristino**: immagine "golden" della SD + `setup.sh` idempotente + backup del database.
+- **Stima dei costi**: imposta `GRID_PRICE_EUR_KWH` in €/kWh (accetta "0,25" o "0.25"); la stima compare solo nella vista a 30 giorni e copre i soli prelievi di rete.
 
 ## Sviluppo e collaudo
 

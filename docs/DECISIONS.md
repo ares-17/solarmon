@@ -199,3 +199,24 @@ la validazione di comandi PI30, allarmi, codici di errore e specifiche elettrich
   non è separabile dalla produzione FV, quindi non si dichiara un'eccedenza.
 - L'eccedenza usa una soglia di 50 W; il deficit è neutro perché di notte è la
   condizione normale, non un guasto.
+
+## Analisi del periodo e stima dei costi (2026-11-16)
+
+- Con 7 e 30 giorni le card istantanee (flusso FV/Casa/Rete e batteria) sono nascoste:
+  descrivono l'istante, non il periodo. Le pillole "Adesso" e "FV" restano come contesto.
+- Le medie giornaliere usano i **giorni equivalenti osservati** (`observed_seconds / 86400`),
+  non `h / 24` né il numero di date di calendario: una finestra di 7 giorni tocca quasi
+  sempre 8 date e dividere per 8 falserebbe i valori.
+- Le fasce sono locali e fisse da 4 ore (`[0,4) … [20,24)`); il profilo "solo FV" è
+  attribuito alle ore locali. Ogni intervallo energia viene spezzato ai confini di fascia,
+  ora e mezzanotte, non attribuito tutto a un bucket.
+- "Solo FV" significa fuori rete, con FV e carico positivi e `pv_w >= out_w - 50` su
+  entrambi i campioni consecutivi: la tolleranza di 50 W assorbe i transitori.
+- I cambi batteria→rete sono confermati da 3 campioni consecutivi nello stesso stato, come
+  il notifier; i buchi di comunicazione oltre `max_stored_gap()` non collegano i due lati
+  e non producono cambi inventati.
+- `GRID_PRICE_EUR_KWH` è un prezzo unico in €/kWh, applicato ai soli prelievi di rete e
+  mostrato **solo** nella vista a 30 giorni. Assente, vuoto o non valido → nessuna stima.
+- Limite noto: le ricariche della batteria dalla rete non sono nello storico (`e_grid_wh`
+  conta solo il carico in bypass), quindi il costo è una stima per difetto e il valore
+  dell'energia coperta da FV+batteria è per eccesso. La dashboard lo dichiara.
