@@ -65,8 +65,11 @@ solarmon/
 Modulo offline per analizzare uno snapshot del database e simulare scenari di accumulo LiFePO4 compatibili con l'inverter, senza toccare il monitoraggio attivo.
 
 ```bash
-# Esecuzione report con coordinate impianto (default Cellole CE: 41.201880, 13.849262)
-python3 -m analysis.report --db solar-snapshot.db --config now.json --bill consumu_annuali.csv --out reports/
+# 1. Download snapshot SQLite consistente dalla Raspberry Pi via SSH (senza fermare solarmon)
+scripts/pull-snapshot.sh pi
+
+# 2. Esecuzione report con coordinate impianto (default Cellole CE: 41.201880, 13.849262)
+python3 -m analysis.report --db snapshots/2026-11-18.db --config now.json --bill consumu_annuali.csv --out reports/
 ```
 
 Il comando genera nella cartella `reports/YYYY-MM-DD_HHMM/`:
