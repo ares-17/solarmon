@@ -55,7 +55,8 @@
   `analysis.timeutil.get_tz(name: str = DEFAULT_TZ) -> TZ` dove `TZ` espone `.name: str` e
   `.offset(ts: float) -> int` (secondi a est di UTC); `to_local(ts, tz) -> datetime` naive;
   `day_start(ts, tz) -> float`; `next_day(ts, tz) -> float`; `hour_of(ts, tz) -> int`;
-  `month_key(ts, tz) -> tuple[int, int]`; `is_night(ts, tz) -> bool` (22:00–05:59).
+  `month_key(ts, tz) -> tuple[int, int]`; `is_night(ts, tz) -> bool` (22:00–06:00,
+  06:00:00 incluso, 06:01 escluso).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -314,7 +315,6 @@ def test_switch_confirmation_needs_three_samples():
 def test_split_interval_at_boundary():
     from analysis.metrics import split_interval
     assert split_interval(0, 10, lambda t: 4) == [(0, 4), (4, 10)]
-```
 ```
 
 Aggiungere un test per `hourly_profile` con un intervallo `10:59:30 → 11:00:30` che
