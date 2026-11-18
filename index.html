@@ -105,6 +105,12 @@ h1{font-size:var(--fs-title);line-height:1.2;font-weight:600;letter-spacing:-.02
 .mix-inline i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
 .mix .meta{font-size:13px}
 .row3{display:grid;gap:var(--gap)}
+.kpis{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:4px}
+.kpi{padding:10px 12px;border:1px solid var(--rule);border-radius:var(--r-ctl);background:var(--raised);min-width:0}
+.kpi-k{margin:0;font-size:12px;color:var(--muted)}
+.kpi-v{margin:2px 0 0;font-size:22px;font-weight:600;letter-spacing:-.02em;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi-s{margin:2px 0 0;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+.cost-note{margin:10px 0 0;font-size:12px;color:var(--muted)}
 .panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:15px 20px 16px;min-width:0}
 .p-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;min-height:26px}
 .p-head h2{font-size:var(--fs-sec);font-weight:600;letter-spacing:-.01em}
@@ -158,11 +164,14 @@ figcaption{margin-top:6px;font-size:13px;color:var(--muted)}
 
 @media (min-width:640px){
   .node-batt{border-top:1px solid var(--rule);padding-top:11px;margin-top:2px}
+  .kpis{grid-template-columns:repeat(3,1fr)}
 }
 @media (min-width:900px){
   .grid{gap:16px}
   .row3{grid-template-columns:repeat(3,1fr)}
   .row3 .panel{min-height:308px}
+  .row3.two{grid-template-columns:repeat(2,1fr)}
+  .kpis{grid-template-columns:repeat(6,1fr)}
   .flow-top{grid-template-columns:1fr minmax(84px,.8fr) 1fr minmax(84px,.8fr) 1fr;gap:16px}
   .flow-link{display:flex}
   .node-batt{display:flex;align-items:baseline;gap:6px 14px}
@@ -236,7 +245,7 @@ figcaption{margin-top:6px;font-size:13px;color:var(--muted)}
     </div>
   </div>
 
-  <div class="flow" role="group" aria-label="Flusso di potenza adesso">
+  <div class="flow" id="flow" role="group" aria-label="Flusso di potenza adesso">
     <div class="flow-top">
       <div class="node">
         <p class="k">FV</p>
@@ -281,6 +290,38 @@ figcaption{margin-top:6px;font-size:13px;color:var(--muted)}
     </div>
   </section>
 
+  <div class="grid" id="analytics" hidden>
+    <section class="panel" aria-labelledby="h-analytics">
+      <div class="p-head"><h2 id="h-analytics">Analisi del periodo</h2><p class="meta" id="a-meta">–</p></div>
+      <div class="kpis" role="group" aria-label="Indicatori del periodo">
+        <div class="kpi"><p class="kpi-k">Consumo</p><p class="kpi-v" id="a-load">–</p><p class="kpi-s" id="a-load-sub"></p></div>
+        <div class="kpi"><p class="kpi-k">FV prodotto</p><p class="kpi-v" id="a-pv">–</p><p class="kpi-s" id="a-pv-sub"></p></div>
+        <div class="kpi"><p class="kpi-k">Autosufficienza</p><p class="kpi-v" id="a-self">–</p><p class="kpi-s" id="a-self-sub"></p></div>
+        <div class="kpi"><p class="kpi-k">Prelievo rete</p><p class="kpi-v" id="a-grid">–</p><p class="kpi-s" id="a-grid-sub"></p></div>
+        <div class="kpi"><p class="kpi-k">Cambi/giorno</p><p class="kpi-v" id="a-switch">–</p><p class="kpi-s" id="a-switch-sub"></p></div>
+        <div class="kpi"><p class="kpi-k">Solo FV</p><p class="kpi-v" id="a-solo">–</p><p class="kpi-s" id="a-solo-sub"></p></div>
+      </div>
+      <p class="cost-note" id="a-cost-note" hidden></p>
+    </section>
+    <section class="panel" aria-labelledby="h-bands">
+      <div class="p-head"><h2 id="h-bands">Consumo per fasce orarie</h2>
+        <div class="legend"><span><i style="background:var(--mix-solar)"></i>FV diretto</span><span><i style="background:var(--mix-batt)"></i>Batteria</span><span><i style="background:var(--mix-grid)"></i>Rete</span></div>
+        <p class="meta" id="a-bands-meta">–</p></div>
+      <figure><svg class="chart" id="c-bands" role="img" aria-labelledby="cap-bands"></svg>
+        <figcaption id="cap-bands">Media giornaliera sui giorni osservati; i totali sono nei KPI.</figcaption></figure>
+    </section>
+    <section class="panel" aria-labelledby="h-solo">
+      <div class="p-head"><h2 id="h-solo">Solo FV, senza rete</h2><p class="meta" id="a-solo-meta">–</p></div>
+      <figure><svg class="chart" id="c-solo" role="img" aria-labelledby="cap-solo"></svg>
+        <figcaption id="cap-solo">Minuti al giorno per ora locale in cui il carico era coperto dai pannelli, senza rete.</figcaption></figure>
+    </section>
+    <section class="panel" aria-labelledby="h-switch">
+      <div class="p-head"><h2 id="h-switch">Cambi batteria → rete</h2><p class="meta" id="a-switch-meta">–</p></div>
+      <figure><svg class="chart" id="c-switch" role="img" aria-labelledby="cap-switch"></svg>
+        <figcaption id="cap-switch">Cambi confermati da 3 campioni consecutivi (≈3 min); linea tratteggiata = media.</figcaption></figure>
+    </section>
+  </div>
+
   <div class="grid">
     <section class="panel" aria-labelledby="h-prod">
       <div class="p-head">
@@ -297,8 +338,8 @@ figcaption{margin-top:6px;font-size:13px;color:var(--muted)}
       </figure>
     </section>
 
-    <div class="row3">
-      <section class="panel batt" aria-labelledby="h-batt">
+    <div class="row3" id="row3">
+      <section class="panel batt" id="panel-batt" aria-labelledby="h-batt">
         <div class="p-head"><h2 id="h-batt">Batteria</h2><span class="state" id="b-state"><i></i><span>–</span></span></div>
         <p class="soc"><b id="b-soc">–</b><span>% carica</span></p>
         <div class="track" aria-hidden="true"><i id="b-track" style="width:0"></i></div>
@@ -320,7 +361,9 @@ figcaption{margin-top:6px;font-size:13px;color:var(--muted)}
       </section>
 
       <section class="panel" aria-labelledby="h-day">
-        <div class="p-head"><h2 id="h-day">Energia al giorno</h2><span class="meta" id="d-meta">–</span></div>
+        <div class="p-head"><h2 id="h-day">Energia al giorno</h2>
+          <div class="legend"><span><i style="background:var(--mix-solar)"></i>FV diretto</span><span><i style="background:var(--mix-batt)"></i>Batteria</span><span><i style="background:var(--mix-grid)"></i>Rete</span></div>
+          <span class="meta" id="d-meta">–</span></div>
         <figure>
           <svg class="chart" id="c-day" role="img" aria-labelledby="cap-day"></svg>
           <figcaption id="cap-day">Energia FV prodotta ogni giorno; la barra scura è oggi, ancora parziale.</figcaption>
@@ -369,7 +412,8 @@ const $ = (id) => document.getElementById(id);
 const RANGE = { 24: 'ultime 24 ore', 168: 'ultimi 7 giorni', 720: 'ultimi 30 giorni' };
 const USABLE_KWH = 4.8 * 0.5;
 let H = 24, NOW = null, SER = null, DAY = null, MIX = null, SUN = null,
-  MIX_ERR = false, SUN_ERR = false, busy = false, timer = 0;
+  MIX_ERR = false, SUN_ERR = false, busy = false, timer = 0,
+  ANA = null, ANA_H = null, ANA_ERR = false;
 
 const fmt = (v, d = 0) => (v === null || v === undefined || !Number.isFinite(+v)) ? '–'
   : new Intl.NumberFormat('it-IT', { useGrouping: true, minimumFractionDigits: d, maximumFractionDigits: d }).format(+v);
@@ -515,6 +559,104 @@ function barChart(svg, ts, values, opts = {}) {
     const anchor = k === 0 ? 'start' : k === ix.length - 1 ? 'end' : 'middle';
     txt(svg, P.l + slot * i + slot / 2, h - 4, i === n - 1 ? 'oggi' : dayLbl(ts[i]), { 'text-anchor': anchor, fill: 'var(--muted)' });
   });
+}
+
+function emptyChart(svg, h, msg) {
+  const { w } = frame(svg, h);
+  empty(svg, w, h, msg);
+}
+
+function stackedBars(svg, labels, series, opts = {}) {
+  const h = opts.height || 220;
+  const { w } = frame(svg, h);
+  const P = { l: 44, r: 10, t: 14, b: 18 };
+  const pw = w - P.l - P.r, ph = h - P.t - P.b;
+  const n = labels.length;
+  const totals = labels.map((_, i) => series.reduce((a, s) => a + (+s.values[i] || 0), 0));
+  if (!n || !totals.some((v) => v > 0)) {
+    empty(svg, w, h, opts.emptyMsg || 'Nessun dato in questo periodo.');
+    return;
+  }
+  const { lo, hi, ticks } = scaleY(0, Math.max(...totals), 4);
+  const Y = (v) => P.t + ph - (v - lo) / (hi - lo) * ph;
+  for (const t of ticks) {
+    const y = Y(t);
+    el('line', { x1: P.l, x2: P.l + pw, y1: y, y2: y, stroke: 'var(--grid)', 'stroke-width': 1 }, svg);
+    txt(svg, P.l - 8, y + 3.5, fmt(t), { 'text-anchor': 'end', fill: 'var(--muted)' });
+  }
+  const slot = pw / n, bw = Math.max(3, Math.min(56, slot - 2)), y0 = Y(0);
+  labels.forEach((_, i) => {
+    const x = P.l + slot * i + (slot - bw) / 2;
+    let acc = 0;
+    for (const s of series) {
+      const v = +s.values[i] || 0;
+      if (v <= 0) continue;
+      const yTop = Y(acc + v), yBottom = Y(acc);
+      el('rect', {
+        x: x.toFixed(1), y: yTop.toFixed(1), width: bw.toFixed(1),
+        height: Math.max(0, yBottom - yTop).toFixed(1), fill: s.color
+      }, svg);
+      acc += v;
+    }
+  });
+  const ix = opts.allLabels ? labels.map((_, i) => i)
+    : [0, Math.floor((n - 1) / 2), n - 1].filter((v, i, a) => a.indexOf(v) === i);
+  for (const i of ix) {
+    const first = i === 0, last = i === n - 1;
+    const x = first ? P.l : last ? P.l + pw : P.l + slot * i + slot / 2;
+    txt(svg, x, h - 4, labels[i],
+      { 'text-anchor': first ? 'start' : last ? 'end' : 'middle', 'font-size': opts.labelSize || 11, fill: 'var(--muted)' });
+  }
+}
+
+function simpleBars(svg, labels, values, opts = {}) {
+  const h = opts.height || 190;
+  const { w } = frame(svg, h);
+  const P = { l: 44, r: 10, t: 14, b: 18 };
+  const pw = w - P.l - P.r, ph = h - P.t - P.b;
+  const vals = values.map((v) => +v || 0), n = labels.length;
+  if (!n || (opts.emptyMsg && !vals.some((v) => v > 0))) {
+    empty(svg, w, h, opts.emptyMsg || 'Nessun dato in questo periodo.');
+    return;
+  }
+  const { lo, hi, ticks } = scaleY(0, Math.max(1, ...vals), 4);
+  const fy = opts.fmtY || fmt;
+  const Y = (v) => P.t + ph - (v - lo) / (hi - lo) * ph;
+  for (const t of ticks) {
+    const y = Y(t);
+    el('line', { x1: P.l, x2: P.l + pw, y1: y, y2: y, stroke: 'var(--grid)', 'stroke-width': 1 }, svg);
+    txt(svg, P.l - 8, y + 3.5, fy(t), { 'text-anchor': 'end', fill: 'var(--muted)' });
+  }
+  const slot = pw / n, bw = Math.max(2, Math.min(30, slot - 2)), y0 = Y(0);
+  vals.forEach((v, i) => {
+    const x = P.l + slot * i + (slot - bw) / 2, y1 = Y(v);
+    el('rect', {
+      x: x.toFixed(1), y: y1.toFixed(1), width: bw.toFixed(1),
+      height: Math.max(0, y0 - y1).toFixed(1), fill: opts.color || 'var(--accent)'
+    }, svg);
+  });
+  if (opts.ref && opts.ref.value >= lo && opts.ref.value <= hi) {
+    const y = Y(opts.ref.value);
+    el('line', { x1: P.l, x2: P.l + pw, y1: y, y2: y, stroke: 'var(--control)', 'stroke-width': 1, 'stroke-dasharray': '2 3' }, svg);
+    txt(svg, P.l + pw, y - 5, opts.ref.label, { 'text-anchor': 'end', 'font-size': 10, fill: 'var(--muted)' });
+  }
+  let ix = opts.xticks;
+  if (!ix) {
+    const maxLabels = Math.max(2, Math.floor(pw / 80));
+    if (n <= maxLabels) ix = labels.map((_, i) => i);
+    else {
+      ix = [];
+      const step = Math.ceil((n - 1) / (maxLabels - 1));
+      for (let i = 0; i < n; i += step) ix.push(i);
+      if (ix[ix.length - 1] !== n - 1) ix.push(n - 1);
+    }
+  }
+  for (const i of ix) {
+    if (!labels[i]) continue;
+    const first = i === 0, last = i === n - 1;
+    const x = first ? P.l : last ? P.l + pw : P.l + slot * i + slot / 2;
+    txt(svg, x, h - 4, labels[i], { 'text-anchor': first ? 'start' : last ? 'end' : 'middle', fill: 'var(--muted)' });
+  }
 }
 
 /* ---------- dati ---------- */
@@ -808,12 +950,115 @@ function paintSettings(cfg) {
   }
 }
 
+function applyPeriodLayout() {
+  const period = H > 24;
+  $('flow').hidden = period;
+  $('panel-batt').hidden = period;
+  $('analytics').hidden = !period;
+  $('row3').classList.toggle('two', period);
+}
+
+function paintAnalyticsCharts(narrow) {
+  const d = ANA, t = d.totals || {}, sw = d.switches || {};
+  const noData = d.days === 0, noLoad = +t.load_kwh === 0;
+  const bandsMsg = noData ? 'Nessun dato in questo periodo.' : 'Nessun consumo nel periodo.';
+  if (noData || noLoad) {
+    emptyChart($('c-bands'), narrow ? 190 : 230, bandsMsg);
+  } else {
+    stackedBars($('c-bands'), d.bands.map((b) => b.label), [
+      { values: d.bands.map((b) => b.solar_kwh), color: 'var(--mix-solar)' },
+      { values: d.bands.map((b) => b.batt_kwh), color: 'var(--mix-batt)' },
+      { values: d.bands.map((b) => b.grid_kwh), color: 'var(--mix-grid)' }
+    ], { height: narrow ? 190 : 230, allLabels: true, labelSize: narrow ? 10 : 11, emptyMsg: bandsMsg });
+  }
+  const pct = t.solar_only_pct != null ? fmt(t.solar_only_pct, 1) + '%' : '–';
+  simpleBars($('c-solo'), Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')),
+    d.solar_only.minutes_per_day, {
+      height: narrow ? 170 : 200, color: 'var(--accent)', fmtY: (v) => fmt(v),
+      emptyMsg: 'Nessun intervallo osservato.', xticks: [0, 6, 12, 18, 23]
+    });
+  $('cap-solo').textContent = 'Solo FV e senza rete: carico coperto dai pannelli, batteria non necessaria. '
+    + fmt(t.solar_only_hours, 1) + ' h nel periodo, ' + pct + ' del tempo osservato.';
+  simpleBars($('c-switch'), sw.days.map((x) => dayLbl(x.ts)), sw.days.map((x) => x.count), {
+    height: narrow ? 160 : 190, color: 'var(--text)',
+    ref: sw.per_day != null ? { value: sw.per_day, label: 'media ' + fmt(sw.per_day, 1) } : null
+  });
+  $('cap-switch').textContent = 'Cambi confermati da 3 campioni consecutivi (≈3 min); linea tratteggiata = media. '
+    + (sw.per_day != null ? 'Media ' + fmt(sw.per_day, 1) + ' al giorno.' : 'Nessun cambio nel periodo.');
+}
+
+function paintAnalytics(narrow) {
+  const ids = ['a-load', 'a-pv', 'a-self', 'a-grid', 'a-switch', 'a-solo'];
+  const set = (id, value, sub = '') => { $(id).textContent = value; $(id + '-sub').textContent = sub; };
+  const metas = { 'a-bands-meta': '–', 'a-solo-meta': '–', 'a-switch-meta': '–' };
+  const note = $('a-cost-note');
+  note.hidden = true;
+  if (!ANA) {
+    const msg = ANA_ERR ? 'dati non disponibili' : 'caricamento…';
+    for (const id of ids) set(id, '–');
+    $('a-meta').textContent = msg;
+    for (const id in metas) $(id).textContent = msg;
+    emptyChart($('c-bands'), narrow ? 190 : 230, msg);
+    emptyChart($('c-solo'), narrow ? 170 : 200, msg);
+    emptyChart($('c-switch'), narrow ? 160 : 190, msg);
+    $('cap-solo').textContent = 'Minuti al giorno per ora locale in cui il carico era coperto dai pannelli, senza rete.';
+    $('cap-switch').textContent = 'Cambi confermati da 3 campioni consecutivi (≈3 min); linea tratteggiata = media.';
+    return;
+  }
+  const d = ANA, t = d.totals || {}, sw = d.switches || {};
+  if (d.days === 0) {
+    set('a-load', fmt(0, 1) + ' kWh');
+    set('a-pv', fmt(0, 1) + ' kWh');
+    set('a-grid', fmt(0, 1) + ' kWh');
+    set('a-self', '–');
+    set('a-switch', '–');
+    set('a-solo', '–');
+    $('a-meta').textContent = 'nessun dato nel periodo';
+    for (const id in metas) $(id).textContent = 'nessun dato';
+    if (ANA_ERR) {
+      $('a-meta').textContent = 'dati non disponibili';
+      for (const id in metas) $(id).textContent = 'dati non disponibili';
+    }
+    paintAnalyticsCharts(narrow);
+    return;
+  }
+  const price = d.price_eur_kwh != null && H === 720;
+  const gridPct = t.load_kwh > 0 ? t.grid_kwh / t.load_kwh * 100 : null;
+  const covered = +t.solar_kwh + +t.batt_kwh;
+  set('a-load', fmt(t.load_kwh, 1) + ' kWh',
+    fmt(covered, 1) + ' kWh da FV e batteria' + (price && t.covered_value_eur != null ? ' · ≈ ' + fmt(t.covered_value_eur, 2) + ' €' : ''));
+  set('a-pv', fmt(t.pv_kwh, 1) + ' kWh', 'FV diretto ' + fmt(t.solar_kwh, 1) + ' kWh');
+  set('a-self', t.self_sufficiency != null ? fmt(t.self_sufficiency, 0) + ' %' : '–',
+    'coperto da FV e batteria');
+  set('a-grid', fmt(t.grid_kwh, 1) + ' kWh',
+    (gridPct != null ? fmt(gridPct, 0) + '% del consumo' : '–') +
+    (price && t.grid_cost_eur != null ? ' · ≈ ' + fmt(t.grid_cost_eur, 2) + ' €' : ''));
+  set('a-switch', sw.per_day != null ? fmt(sw.per_day, 1) : '–', fmt(sw.total, 0) + ' cambi totali');
+  set('a-solo', t.solar_only_pct != null ? fmt(t.solar_only_pct, 1) + ' %' : '–',
+    fmt(t.solar_only_hours, 1) + ' h nel periodo');
+  $('a-meta').textContent = fmt(d.days, 1) + ' giorni osservati';
+  metas['a-bands-meta'] = 'kWh/giorno';
+  metas['a-solo-meta'] = fmt(t.solar_only_hours, 1) + ' h · ' + fmt(t.solar_only_pct, 1) + '% del tempo';
+  metas['a-switch-meta'] = fmt(sw.total, 0) + ' cambi in ' + fmt(d.days, 1) + ' giorni';
+  for (const id in metas) $(id).textContent = metas[id];
+  if (ANA_ERR) {
+    $('a-meta').textContent = 'dati non disponibili';
+    for (const id in metas) $(id).textContent = 'dati non disponibili';
+  }
+  paintAnalyticsCharts(narrow);
+  if (price) {
+    note.textContent = 'Stima indicativa: prezzo applicato ai soli prelievi di rete; non include le ricariche da rete.';
+    note.hidden = false;
+  }
+}
+
 function paintCharts(cfg) {
   if ($('overview').hidden) return;
   const narrow = window.innerWidth < 640;
   paintProduct(narrow);
   paintVoltage(cfg, narrow);
   paintDaily(narrow);
+  if (H > 24) paintAnalytics(narrow);
 }
 
 const MIX_KEYS = [['solar', 'FV diretto'], ['batt', 'Batteria'], ['grid', 'Rete']];
@@ -917,6 +1162,38 @@ function paintVoltage(cfg, narrow) {
 }
 
 function paintDaily(narrow) {
+  if (H > 24) {
+    const height = narrow ? 168 : 186;
+    $('cap-day').textContent = 'Energia consumata ogni giorno, divisa per fonte.';
+    if (!ANA) {
+      const msg = ANA_ERR ? 'dati non disponibili' : 'caricamento…';
+      $('d-meta').textContent = msg;
+      emptyChart($('c-day'), height, msg);
+      return;
+    }
+    if (ANA.days === 0) {
+      $('d-meta').textContent = ANA_ERR ? 'dati non disponibili' : 'nessun dato';
+      emptyChart($('c-day'), height, ANA_ERR ? 'dati non disponibili' : 'Nessun dato in questo periodo.');
+      return;
+    }
+    const totals = ANA.totals || {}, daily = ANA.daily || {};
+    if (+totals.load_kwh === 0) {
+      $('d-meta').textContent = 'nessun consumo';
+      emptyChart($('c-day'), height, 'Nessun consumo nel periodo.');
+      return;
+    }
+    const solar = daily.solar || [], batt = daily.batt || [], grid = daily.grid || [];
+    const total = solar.concat(batt).concat(grid).reduce((a, v) => a + (+v || 0), 0);
+    $('d-meta').textContent = fmt(total, 1) + ' kWh nel periodo';
+    stackedBars($('c-day'), (daily.ts || []).map(dayLbl), [
+      { values: solar, color: 'var(--mix-solar)' },
+      { values: batt, color: 'var(--mix-batt)' },
+      { values: grid, color: 'var(--mix-grid)' }
+    ], { height });
+    if (ANA_ERR) $('d-meta').textContent = 'dati non disponibili';
+    return;
+  }
+  $('cap-day').textContent = 'Energia FV prodotta ogni giorno; la barra scura è oggi, ancora parziale.';
   if (!DAY || !DAY.ts || !DAY.ts.length) return;
   const kwh = DAY.kwh || [];
   const total = kwh.reduce((a, b) => a + (+b || 0), 0);
@@ -950,12 +1227,18 @@ async function load() {
   busy = true;
   $('refresh').disabled = true;
   try {
-    const [n, s, d, m, u] = await Promise.all([
+    const analytics = H > 24 ? json('/api/analytics?h=' + H).catch(() => null) : Promise.resolve(null);
+    const [n, s, d, m, u, a] = await Promise.all([
       json('/api/now'), json('/api/series?h=' + H), json('/api/daily'),
       json('/api/mix?h=' + H).catch(() => null),
-      json('/api/sun?h=' + H).catch(() => null)
+      json('/api/sun?h=' + H).catch(() => null),
+      analytics
     ]);
     NOW = n; SER = s; DAY = d; MIX = m; SUN = u; MIX_ERR = m === null; SUN_ERR = u === null;
+    if (H > 24) {
+      if (a) { ANA = a; ANA_H = H; ANA_ERR = false; }
+      else { ANA_ERR = true; if (ANA_H !== H) ANA = null; }
+    }
     render();
   } catch (e) {
     const last = NOW && NOW.ts ? ' Ultimo dato ' + clock(NOW.ts) + '.' : '';
@@ -975,7 +1258,16 @@ function schedule() {
 
 document.querySelectorAll('.seg button').forEach((b) => {
   b.addEventListener('click', () => {
-    H = +b.dataset.h;
+    const next = +b.dataset.h;
+    if (next !== H) {
+      H = next;
+      ANA = null; ANA_H = null; ANA_ERR = false;
+      applyPeriodLayout();
+      if (H > 24) {
+        paintAnalytics(window.innerWidth < 640);
+        paintDaily(window.innerWidth < 640);
+      }
+    }
     document.querySelectorAll('.seg button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
     load();
   });
@@ -987,6 +1279,7 @@ function route() {
   const settings = location.hash === '#impostazioni';
   $('overview').hidden = settings;
   $('settings').hidden = !settings;
+  applyPeriodLayout();
   if (settings && NOW) paintSettings(NOW.cfg || {});
   if (!settings) paintCharts(NOW ? NOW.cfg || {} : {});
   window.scrollTo(0, 0);
@@ -999,6 +1292,7 @@ new ResizeObserver(() => {
   rz = setTimeout(() => { if (NOW) paintCharts(NOW.cfg || {}); }, 120);
 }).observe($('overview'));
 
+applyPeriodLayout();
 route();
 load();
 schedule();

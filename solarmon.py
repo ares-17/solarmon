@@ -20,6 +20,24 @@ def load_env():  # legge solarmon.env (o il file in SOLARMON_ENV); l'ambiente re
 
 load_env()
 E = os.environ.get
+log = logging.getLogger("solarmon")
+
+
+def parse_price(raw):
+    """Prezzo EUR/kWh da env: accetta virgola o punto; None se vuoto o non valido."""
+    text = raw.strip()
+    v = None
+    if text:
+        try:
+            v = float(text.replace(",", "."))
+        except ValueError:
+            pass
+        if v is None or not math.isfinite(v) or v <= 0:
+            log.warning("GRID_PRICE_EUR_KWH non valido: %r", raw)
+            v = None
+    return v
+
+
 DEV, DB = E("INVERTER_DEV", "/dev/inverter"), E("DB_PATH", "/var/lib/solarmon/solar.db")
 HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
 DEFAULT_BIND = "0.0.0.0" if (os.path.exists("/.dockerenv") or os.environ.get("CONTAINER") or os.environ.get("IN_DOCKER")) else "127.0.0.1"
@@ -30,8 +48,8 @@ TG_ADMIN = int(E("TG_ADMIN_ID") or TG_CHAT or 0)
 ALLOW_WRITE = E("ALLOW_WRITE", "0") == "1"
 GRID_CONFIRM, GRID_MIN_V = 3, 90.0
 SOLAR_PLACE, SOLAR_LAT, SOLAR_LON = E("SOLAR_PLACE", ""), E("SOLAR_LAT", ""), E("SOLAR_LON", "")
+GRID_PRICE = parse_price(E("GRID_PRICE_EUR_KWH", ""))
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
-log = logging.getLogger("solarmon")
 
 MODES = {"P": "Accensione", "S": "Standby", "L": "Rete", "B": "Batteria", "F": "FAULT", "H": "Risparmio"}
 
@@ -279,6 +297,78 @@ def mix_payload(h):
             "to": visible[-1][0] if visible else None}
 
 
+def analytics_payload(h, now=None):
+    """Analisi del periodo: fasce, solo FV, cambi, energia al giorno e costi."""
+    now = time.time() if now is None else float(now)
+    since = now - h * 3600
+    with closing(connect()) as con:
+        rows = con.execute(
+            "SELECT ts,pv_w,out_w,grid_v,mode,%s FROM samples WHERE ts>? ORDER BY ts"
+            % ",".join(ENERGY_COLS), (since - max_stored_gap(),)).fetchall()
+    raw = [(ts, pv, out, grid_v, mode) for ts, pv, out, grid_v, mode, *_ in rows]
+    energy_input = [(ts, pv, out, mode, e_pv, e_solar, e_batt, e_grid)
+                    for ts, pv, out, _grid_v, mode, e_pv, e_solar, e_batt, e_grid in rows]
+
+    observed = observed_seconds(raw, since, now)
+    days_exact = observed / 86400.0
+    days = round(days_exact, 2)
+    if observed > 0 and days == 0:  # finestre corte: non azzerare il denominatore
+        days = round(days_exact, 8)
+
+    e_pv, e_solar, e_batt, e_grid = energy_totals(energy_input, since, now)
+    pv_kwh, solar_kwh, batt_kwh, grid_kwh = (x / 1000.0 for x in (e_pv, e_solar, e_batt, e_grid))
+    load_kwh = solar_kwh + batt_kwh + grid_kwh
+    self_sufficiency = round((solar_kwh + batt_kwh) / load_kwh * 100.0, 1) if load_kwh > 0 else None
+
+    minutes, solo_hours, solo_pct = solar_only_profile(raw, since, now, days_exact)
+    bands = []
+    band_energy = band_totals(energy_input, since, now)
+    for i, (solar, batt, grid) in enumerate(band_energy):
+        start = i * 4
+        row = {"start": start, "label": "%02d–%02d" % (start, start + 4)}
+        for key, wh in (("solar_kwh", solar), ("batt_kwh", batt), ("grid_kwh", grid)):
+            row[key] = round(wh / 1000.0 / days_exact, 3) if days_exact > 0 else 0.0
+        bands.append(row)
+
+    visible_days = sorted({day_of(ts) for ts, *_ in raw if ts >= since})
+    daily = daily_by_source(energy_input, since, now)
+    by_ts = dict(zip(daily["ts"], zip(daily["solar"], daily["batt"], daily["grid"])))
+    daily_out = {"ts": [], "solar": [], "batt": [], "grid": []}
+    for d in visible_days:
+        ts_midnight = int(midnight_of(d))
+        solar, batt, grid = by_ts.get(ts_midnight, (0.0, 0.0, 0.0))
+        daily_out["ts"].append(ts_midnight)
+        daily_out["solar"].append(solar)
+        daily_out["batt"].append(batt)
+        daily_out["grid"].append(grid)
+
+    switch_rows = [(ts, grid_v, mode) for ts, _pv, _out, grid_v, mode in raw]
+    total, by_day = count_switches(switch_rows, since=since)
+    per_day = round(total / days_exact, 1) if days_exact > 0 else None
+    switch_days = [{"ts": int(midnight_of(d)), "count": by_day.get(d, 0)} for d in visible_days]
+
+    if GRID_PRICE is None or days_exact == 0:
+        grid_cost = covered_value = None
+    else:
+        grid_cost = round(grid_kwh * GRID_PRICE, 2)
+        covered_value = round((solar_kwh + batt_kwh) * GRID_PRICE, 2)
+
+    return {
+        "h": h, "from": int(since), "to": int(now), "days": days, "price_eur_kwh": GRID_PRICE,
+        "totals": {
+            "load_kwh": round(load_kwh, 3), "pv_kwh": round(pv_kwh, 3),
+            "solar_kwh": round(solar_kwh, 3), "batt_kwh": round(batt_kwh, 3),
+            "grid_kwh": round(grid_kwh, 3), "self_sufficiency": self_sufficiency,
+            "grid_cost_eur": grid_cost, "covered_value_eur": covered_value,
+            "solar_only_hours": solo_hours, "solar_only_pct": solo_pct,
+        },
+        "bands": bands,
+        "solar_only": {"minutes_per_day": minutes, "hours": solo_hours, "pct": solo_pct},
+        "switches": {"days": switch_days, "total": total, "per_day": per_day},
+        "daily": daily_out,
+    }
+
+
 def day_of(ts):
     return datetime.date.fromtimestamp(ts)
 
@@ -289,6 +379,137 @@ def midnight_of(day):
 
 def next_midnight(ts):
     return midnight_of(day_of(ts) + datetime.timedelta(days=1))
+
+
+def band_index(ts):
+    """Indice fascia locale da 4 ore (0=00-04, 1=04-08, ..., 5=20-24)."""
+    return datetime.datetime.fromtimestamp(ts).hour // 4
+
+
+def next_hour(ts):
+    """Timestamp inizio prossima ora locale."""
+    dt = datetime.datetime.fromtimestamp(ts)
+    nxt = datetime.datetime.combine(dt.date(), datetime.time(dt.hour)) + datetime.timedelta(hours=1)
+    res = nxt.timestamp()
+    return res if res > ts else ts + 1
+
+
+def next_band(ts):
+    """Timestamp inizio prossima fascia locale da 4 ore."""
+    dt = datetime.datetime.fromtimestamp(ts)
+    next_band_hour = (dt.hour // 4 + 1) * 4
+    if next_band_hour < 24:
+        nxt = datetime.datetime.combine(dt.date(), datetime.time(next_band_hour))
+    else:
+        nxt = datetime.datetime.combine(dt.date() + datetime.timedelta(days=1), datetime.time(0))
+    res = nxt.timestamp()
+    return res if res > ts else ts + 1
+
+
+def split_interval(start, end, next_boundary):
+    """Divide [start, end] in segmenti contigui ai confini dati da next_boundary."""
+    parts = []
+    a = float(start)
+    b_limit = float(end)
+    while a < b_limit:
+        b = min(b_limit, next_boundary(a))
+        if b <= a:
+            b = b_limit
+        parts.append((a, b))
+        a = b
+    return parts
+
+
+def observed_seconds(raw, since, now, gap=None):
+    """Secondi realmente osservati nella finestra, ignorando i buchi di comunicazione."""
+    limit = gap or max_stored_gap()
+    total = 0.0
+    for prev, cur in zip(raw, raw[1:]):
+        dt = float(cur[0]) - float(prev[0])
+        if not 0 < dt <= limit:
+            continue
+        visible = min(float(now), float(cur[0])) - max(float(since), float(prev[0]))
+        if visible > 0:
+            total += visible
+    return total
+
+
+def energy_totals(energy_input, since, now):
+    """Wh (pv, solar, batt, grid) nella finestra, ritagliando ogni intervallo."""
+    total = [0.0, 0.0, 0.0, 0.0]
+    for start, end, step in energy_rows(energy_input):
+        if start is None:
+            continue
+        span = float(end) - float(start)
+        if span <= 0:
+            continue
+        fraction = (min(float(end), now) - max(float(start), since)) / span
+        if fraction > 0:
+            total = [a + b * fraction for a, b in zip(total, step)]
+    return tuple(total)
+
+
+def band_totals(energy_input, since, now):
+    """Wh [solar, batt, grid] per ciascuna delle sei fasce locali da 4 ore."""
+    totals = [[0.0, 0.0, 0.0] for _ in range(6)]
+    for start, end, step in energy_rows(energy_input):
+        if start is None:
+            continue
+        span = float(end) - float(start)
+        a, b = max(float(start), float(since)), min(float(end), float(now))
+        if span <= 0 or b <= a:
+            continue
+        for sa, sb in split_interval(a, b, next_band):
+            fraction = (sb - sa) / span
+            row = totals[band_index(sa)]
+            row[0] += step[1] * fraction
+            row[1] += step[2] * fraction
+            row[2] += step[3] * fraction
+    return totals
+
+
+def daily_by_source(energy_input, since, now):
+    """kWh al giorno locale per fonte: solar, batt, grid."""
+    buckets = collections.defaultdict(lambda: [0.0, 0.0, 0.0])
+    for start, end, step in energy_rows(energy_input):
+        if start is None:
+            continue
+        span = float(end) - float(start)
+        a, b = max(float(start), float(since)), min(float(end), float(now))
+        if span <= 0 or b <= a:
+            continue
+        for sa, sb in split_interval(a, b, next_midnight):
+            fraction = (sb - sa) / span / 1000.0
+            bucket = buckets[day_of(sa)]
+            for i in range(3):
+                bucket[i] += step[i + 1] * fraction
+    ordered = sorted(buckets)
+    return {"ts": [int(midnight_of(d)) for d in ordered],
+            "solar": [round(buckets[d][0], 3) for d in ordered],
+            "batt": [round(buckets[d][1], 3) for d in ordered],
+            "grid": [round(buckets[d][2], 3) for d in ordered]}
+
+
+def solar_only_profile(raw, since, now, days):
+    """Minuti/giorno per ora locale con carico coperto solo dal FV, senza rete."""
+    seconds = [0.0] * 24
+    limit = max_stored_gap()
+    for prev, cur in zip(raw, raw[1:]):
+        if not solar_only(prev, cur):
+            continue
+        dt = float(cur[0]) - float(prev[0])
+        if not 0 < dt <= limit:
+            continue
+        a, b = max(float(prev[0]), float(since)), min(float(cur[0]), float(now))
+        if b <= a:
+            continue
+        for sa, sb in split_interval(a, b, next_hour):
+            seconds[datetime.datetime.fromtimestamp(sa).hour] += sb - sa
+    total = sum(seconds)
+    minutes = [round(s / 60.0 / days, 1) if days > 0 else 0.0 for s in seconds]
+    observed = observed_seconds(raw, since, now)
+    pct = round(total / observed * 100.0, 1) if observed > 0 else None
+    return minutes, round(total / 3600.0, 2), pct
 
 
 def daily_payload(days=30):
@@ -429,8 +650,56 @@ def _finite(v):
         return False
 
 
+def is_on_grid(grid_v, mode):
+    return mode == "L" and _finite(grid_v) and float(grid_v) > GRID_MIN_V
+
+
 def grid_on(gs, mode):
-    return mode == "L" and _finite(gs.get("grid_v")) and float(gs["grid_v"]) > GRID_MIN_V
+    return is_on_grid(gs.get("grid_v"), mode)
+
+
+def solar_only(prev, cur):
+    """Carico coperto dai pannelli senza rete, con tolleranza di 50 W."""
+
+    def ok(row):
+        _, pv_w, out_w, grid_v, mode = row
+        return (not is_on_grid(grid_v, mode) and _finite(pv_w) and float(pv_w) > 0
+                and _finite(out_w) and float(out_w) > 0
+                and float(pv_w) >= float(out_w) - 50)
+
+    return ok(prev) and ok(cur)
+
+
+def count_switches(rows, gap=None, since=None):
+    """Cambi batteria->rete confermati da GRID_CONFIRM campioni consecutivi.
+
+    Con ``since`` si contano solo le conferme dentro la finestra: le righe
+    precedenti servono a ricostruire lo stato, non a sommarsi al totale.
+    """
+    total, by_day = 0, collections.defaultdict(int)
+    if not rows:
+        return total, {}
+    limit = gap or max_stored_gap()
+    prev_ts, prev_grid, prev_mode = rows[0]
+    confirmed = is_on_grid(prev_grid, prev_mode)
+    candidate, count = None, 0
+    for ts, grid_v, mode in rows[1:]:
+        state = is_on_grid(grid_v, mode)
+        dt, prev_ts = ts - prev_ts, ts
+        if dt > limit:
+            confirmed, candidate, count = state, None, 0
+            continue
+        if state == confirmed:
+            candidate, count = None, 0
+            continue
+        count = count + 1 if state == candidate else 1
+        candidate = state
+        if count >= GRID_CONFIRM:
+            if state and (since is None or ts >= since):
+                total += 1
+                by_day[day_of(ts)] += 1
+            confirmed, candidate, count = state, None, 0
+    return total, dict(by_day)
 
 
 def grid_switch_text(new_on_grid, gs, mode):
@@ -657,6 +926,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.out(sun_payload(qint(q, "h", 24, 1, 24 * 365)))
             elif u.path == "/api/mix":
                 self.out(mix_payload(qint(q, "h", 24, 1, 24 * 365)))
+            elif u.path == "/api/analytics":
+                self.out(analytics_payload(qint(q, "h", 24, 1, 24 * 365)))
             elif u.path == "/api/daily":
                 self.out(daily_payload())
             else:

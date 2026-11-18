@@ -4,6 +4,7 @@ Questi test bloccano il comportamento su risposte reali dell'inverter: se un ref
 cambia gli indici dei campi, il test fallisce prima che il dato sbagliato finisca nel DB.
 """
 
+import datetime
 import importlib.util
 import json
 import logging
@@ -217,6 +218,42 @@ def test_prepare_rejects_cutoff_above_back_to_grid(solarmon):
 
 def test_prepare_maps_output_priority(solarmon):
     assert solarmon.prepare("uscita", "sbu", CFG) == ("POP02", "Priorita' uscita")
+
+
+# --- prezzo energia ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("0.25", 0.25), ("0,25", 0.25), (" 0.30 ", 0.30),
+    ("", None), ("abc", None), ("-1", None), ("0", None), ("nan", None),
+])
+def test_parse_price(solarmon, raw, expected):
+    assert solarmon.parse_price(raw) == expected
+
+
+# --- bucket locali e suddivisione intervalli --------------------------------
+
+
+def _local_ts(day, hour, minute=0):
+    return datetime.datetime.combine(day, datetime.time(hour, minute)).timestamp()
+
+
+def test_band_index_uses_local_four_hour_bands(solarmon):
+    d = datetime.date(2026, 11, 16)
+    assert solarmon.band_index(_local_ts(d, 0)) == 0
+    assert solarmon.band_index(_local_ts(d, 3, 59)) == 0
+    assert solarmon.band_index(_local_ts(d, 4)) == 1
+    assert solarmon.band_index(_local_ts(d, 23, 59)) == 5
+
+
+def test_split_interval_splits_at_hour_boundaries(solarmon):
+    d = datetime.date(2026, 11, 16)
+    start, end = _local_ts(d, 3, 30), _local_ts(d, 5, 10)
+    parts = solarmon.split_interval(start, end, solarmon.next_hour)
+    assert len(parts) == 3
+    assert parts[0] == pytest.approx((_local_ts(d, 3, 30), _local_ts(d, 4)))
+    assert parts[1] == pytest.approx((_local_ts(d, 4), _local_ts(d, 5)))
+    assert parts[2] == pytest.approx((_local_ts(d, 5), _local_ts(d, 5, 10)))
 
 
 # --- posizione solare -------------------------------------------------------
@@ -437,6 +474,82 @@ def test_grid_on_requires_line_mode_and_ac(solarmon):
     assert solarmon.grid_on(_gs(grid_v=230), "B") is False
 
 
+def test_solar_only_requires_no_grid_and_pv_covering_load(solarmon):
+    ok = (0, 500.0, 500.0, 0.0, "B")
+    assert solarmon.solar_only(ok, ok) is True
+    assert solarmon.solar_only((0, 500.0, 540.0, 0.0, "B"),
+                               (0, 500.0, 540.0, 0.0, "B")) is True
+    assert solarmon.solar_only((0, 500.0, 600.0, 0.0, "B"),
+                               (0, 500.0, 600.0, 0.0, "B")) is False
+    assert solarmon.solar_only((0, 500.0, 560.0, 0.0, "B"),
+                               (0, 500.0, 560.0, 0.0, "B")) is False
+    assert solarmon.solar_only((0, 500.0, 500.0, 230.0, "L"),
+                               (0, 500.0, 500.0, 230.0, "L")) is False
+    assert solarmon.solar_only((0, 0.0, 0.0, 0.0, "B"),
+                               (0, 0.0, 0.0, 0.0, "B")) is False
+
+
+def test_count_switches_requires_three_consecutive_samples(solarmon):
+    t = 1_700_000_000
+    rows = [(t, 0.0, "B"), (t + 60, 230.0, "L"), (t + 120, 230.0, "L"),
+            (t + 180, 230.0, "L"), (t + 240, 0.0, "B")]
+    total, by_day = solarmon.count_switches(rows)
+    assert total == 1
+    assert sum(by_day.values()) == 1
+
+
+def test_count_switches_ignores_flapping_and_gaps(solarmon):
+    t = 1_700_000_000
+    flapping = [(t, 0.0, "B"), (t + 60, 230.0, "L"), (t + 120, 0.0, "B"),
+                (t + 180, 230.0, "L"), (t + 240, 0.0, "B")]
+    assert solarmon.count_switches(flapping)[0] == 0
+    gap = [(t, 0.0, "B"), (t + 60, 230.0, "L"), (t + 120, 230.0, "L"),
+           (t + 4000, 230.0, "L"), (t + 4060, 230.0, "L")]
+    assert solarmon.count_switches(gap, gap=300)[0] == 0
+
+
+def test_observed_seconds_clips_to_window_and_ignores_gaps(solarmon):
+    raw = [(95, 0, 0, 0, "B"), (105, 0, 0, 0, "B"),
+           (115, 0, 0, 0, "B"), (1000, 0, 0, 0, "B")]
+    assert solarmon.observed_seconds(raw, 100, 200, gap=60) == pytest.approx(15)
+    assert solarmon.observed_seconds(raw, 100, 200, gap=5) == 0
+
+
+def test_band_totals_split_energy_at_four_hour_boundary(solarmon, monkeypatch):
+    monkeypatch.setattr(solarmon, "STORE_INTERVAL", 3600)
+    d = datetime.date(2026, 11, 16)
+    start, end = _local_ts(d, 3, 30), _local_ts(d, 4, 30)
+    rows = [(start, 0, 1000, "B", None, None, None, None),
+            (end, 0, 1000, "B", None, None, None, None)]
+    bands = solarmon.band_totals(rows, start, end)
+    assert bands[0][1] == pytest.approx(500)
+    assert bands[1][1] == pytest.approx(500)
+    assert sum(b[1] for b in bands) == pytest.approx(1000)
+
+
+def test_daily_by_source_splits_at_local_midnight(solarmon, monkeypatch):
+    monkeypatch.setattr(solarmon, "STORE_INTERVAL", 3600)
+    d = datetime.date(2026, 11, 16)
+    start = _local_ts(d, 23, 30)
+    end = _local_ts(d + datetime.timedelta(days=1), 0, 30)
+    rows = [(start, 0, 1000, "B", None, None, None, None),
+            (end, 0, 1000, "B", None, None, None, None)]
+    daily = solarmon.daily_by_source(rows, start, end)
+    assert daily["batt"] == pytest.approx([0.5, 0.5], abs=0.01)
+
+
+def test_solar_only_profile_attributes_minutes_to_local_hours(solarmon, monkeypatch):
+    monkeypatch.setattr(solarmon, "STORE_INTERVAL", 3600)
+    d = datetime.date(2026, 11, 16)
+    start = _local_ts(d, 10, 0)
+    end = _local_ts(d, 10, 30)
+    raw = [(start, 800, 500, 0, "B"), (end, 800, 500, 0, "B")]
+    minutes, hours, pct = solarmon.solar_only_profile(raw, start, end, days=0.5)
+    assert minutes[10] == pytest.approx(60)
+    assert hours == pytest.approx(0.5)
+    assert pct == pytest.approx(100)
+
+
 def test_grid_switch_text_to_grid(solarmon):
     assert solarmon.grid_switch_text(True, _gs(batt_v=46.2, batt_pct=18), "L") == \
         "Passato alla rete: batteria al 18% (46,2 V)."
@@ -552,3 +665,189 @@ def test_legacy_alerts_are_removed(solarmon):
         assert needle not in src
 
 
+
+
+# --- analisi del periodo ----------------------------------------------------
+
+
+def _insert_analytics(con, rows):
+    for ts, pv, out, grid, mode, e in rows:
+        con.execute("INSERT INTO samples(ts,pv_w,out_w,grid_v,mode,"
+                    "e_pv_wh,e_solar_wh,e_batt_wh,e_grid_wh) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (ts, pv, out, grid, mode, *e))
+
+
+def test_analytics_empty_database_contract(db, server):
+    with closing(urllib.request.urlopen(server + "/api/analytics?h=168", timeout=5)) as r:
+        body = json.load(r)
+    assert body["days"] == 0
+    assert body["totals"]["load_kwh"] == 0
+    assert body["totals"]["self_sufficiency"] is None
+    assert body["totals"]["grid_cost_eur"] is None
+    assert body["switches"]["per_day"] is None
+    assert len(body["bands"]) == 6
+    assert len(body["solar_only"]["minutes_per_day"]) == 24
+    assert body["switches"]["days"] == [] and body["daily"]["ts"] == []
+
+
+def test_analytics_totals_bands_and_days(db, server, monkeypatch):
+    monkeypatch.setattr(db, "STORE_INTERVAL", 3600)  # righe orarie nel test
+    now = int(time.time())
+    since = now - 7 * 86400
+    con = db.connect()
+    rows = []
+    for i in range(-1, 7 * 24 + 1):
+        ts = since + i * 3600
+        rows.append((ts, 1000, 1000, 0, "B", (1000, 1000, 500, 500)))
+    _insert_analytics(con, rows)
+    con.commit()
+    con.close()
+    monkeypatch.setattr(db, "GRID_PRICE", 0.25)
+    with closing(urllib.request.urlopen(server + "/api/analytics?h=168", timeout=5)) as r:
+        body = json.load(r)
+    assert body["days"] == pytest.approx(7, abs=0.1)
+    assert body["totals"]["solar_kwh"] == pytest.approx(168, abs=1)
+    assert body["totals"]["batt_kwh"] == pytest.approx(84, abs=1)
+    assert body["totals"]["grid_kwh"] == pytest.approx(84, abs=1)
+    assert body["totals"]["load_kwh"] == pytest.approx(336, abs=2)
+    assert body["totals"]["self_sufficiency"] == pytest.approx(75, abs=0.2)
+    assert body["totals"]["grid_cost_eur"] == pytest.approx(21, abs=0.2)
+    assert body["totals"]["covered_value_eur"] == pytest.approx(63, abs=0.2)
+    assert len(body["bands"]) == 6
+    assert sum(b["solar_kwh"] + b["batt_kwh"] + b["grid_kwh"] for b in body["bands"]) \
+        == pytest.approx(body["totals"]["load_kwh"] / body["days"], abs=0.01)
+    assert len(body["daily"]["ts"]) == 8
+    assert sum(body["daily"]["solar"]) + sum(body["daily"]["batt"]) \
+        + sum(body["daily"]["grid"]) == pytest.approx(body["totals"]["load_kwh"], abs=0.1)
+
+
+def test_analytics_switches_end_to_end(db, server, monkeypatch):
+    now = int(time.time())
+    base = now - 10 * 60
+    con = db.connect()
+    _insert_analytics(con, [
+        (base, 0, 0, 0, "B", (0, 0, 0, 0)),
+        (base + 60, 0, 0, 230, "L", (0, 0, 0, 100)),
+        (base + 120, 0, 0, 230, "L", (0, 0, 0, 100)),
+        (base + 180, 0, 0, 230, "L", (0, 0, 0, 100)),
+    ])
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/analytics?h=1", timeout=5)) as r:
+        body = json.load(r)
+    assert body["switches"]["total"] == 1
+    assert body["switches"]["per_day"] == pytest.approx(1 / body["days"], abs=0.01)
+
+
+def test_analytics_invalid_h_uses_default(db, server):
+    with closing(urllib.request.urlopen(server + "/api/analytics?h=abc", timeout=5)) as r:
+        assert json.load(r)["h"] == 24
+
+
+def test_analytics_single_sample_has_no_consumption(db, server):
+    now = int(time.time())
+    con = db.connect()
+    _insert_analytics(con, [(now - 60, 500, 500, 0, "B", (0, 0, 0, 0))])
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/analytics?h=168", timeout=5)) as r:
+        body = json.load(r)
+    assert body["days"] == 0
+    assert body["totals"]["load_kwh"] == 0
+    assert body["totals"]["self_sufficiency"] is None
+    assert body["totals"]["grid_cost_eur"] is None
+    assert body["switches"]["per_day"] is None
+    assert sum(body["solar_only"]["minutes_per_day"]) == 0
+    assert all(v == 0 for v in body["daily"]["solar"] + body["daily"]["batt"] + body["daily"]["grid"])
+
+
+def test_analytics_without_price_has_no_cost_even_with_data(db, server, monkeypatch):
+    monkeypatch.setattr(db, "STORE_INTERVAL", 3600)
+    monkeypatch.setattr(db, "GRID_PRICE", None)
+    now = int(time.time())
+    since = now - 2 * 86400
+    con = db.connect()
+    _insert_analytics(con, [
+        (since + i * 3600, 1000, 1000, 0, "B", (1000, 1000, 500, 500))
+        for i in range(0, 2 * 24 + 1)
+    ])
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/analytics?h=48", timeout=5)) as r:
+        body = json.load(r)
+    assert body["days"] > 1
+    assert body["totals"]["load_kwh"] > 0
+    assert body["price_eur_kwh"] is None
+    assert body["totals"]["grid_cost_eur"] is None
+    assert body["totals"]["covered_value_eur"] is None
+
+
+def test_analytics_switch_confirmed_just_inside_window_counts(db, server):
+    now = int(time.time())
+    base = now - 3600  # ~since della finestra da un'ora
+    con = db.connect()
+    _insert_analytics(con, [
+        (base - 150, 0, 0, 0, "B", (0, 0, 0, 0)),
+        (base - 90, 0, 0, 230, "L", (0, 0, 0, 100)),
+        (base - 30, 0, 0, 230, "L", (0, 0, 0, 100)),
+        (base + 30, 0, 0, 230, "L", (0, 0, 0, 100)),
+    ])
+    con.commit()
+    con.close()
+    with closing(urllib.request.urlopen(server + "/api/analytics?h=1", timeout=5)) as r:
+        body = json.load(r)
+    # la conferma (terzo L) cade dentro la finestra: il cambio va contato
+    assert body["switches"]["total"] == 1
+
+
+def test_analytics_ratios_use_exact_observed_days(db, monkeypatch):
+    monkeypatch.setattr(db, "STORE_INTERVAL", 3600)
+    now = 1_800_000_000
+    since = now - 3 * 3600
+    con = db.connect()
+    _insert_analytics(con, [
+        (since + i * 3600, 1000, 1000, 0, "B", (1000, 1000, 0, 0))
+        for i in range(4)
+    ])
+    con.commit()
+    con.close()
+    body = db.analytics_payload(3, now=now)
+    observed_days = 3 * 3600 / 86400.0  # 0,125 giorni, non il 0,12/0,13 mostrato
+    band_total = sum(b["solar_kwh"] + b["batt_kwh"] + b["grid_kwh"] for b in body["bands"])
+    assert band_total == pytest.approx(body["totals"]["load_kwh"] / observed_days, abs=0.01)
+
+
+# --- dashboard: analisi del periodo ----------------------------------------
+
+
+def test_dashboard_has_analytics_markup():
+    html = (ROOT / "index.html").read_text()
+    for needle in ('id="flow"', 'id="row3"', 'id="panel-batt"', 'id="analytics"',
+                   'id="a-load"', 'id="a-pv"', 'id="a-self"', 'id="a-grid"',
+                   'id="a-switch"', 'id="a-solo"', 'id="c-bands"', 'id="c-solo"',
+                   'id="c-switch"', 'api/analytics'):
+        assert needle in html
+
+
+def test_dashboard_analytics_regressions_are_locked():
+    html = (ROOT / "index.html").read_text()
+    # il 24 ore ripristina la sua didascalia dopo una visita a 7/30 giorni
+    assert html.count("Energia FV prodotta ogni giorno; la barra scura è oggi, ancora parziale.") >= 2
+    # un errore di periodo non lascia le didascalie del periodo precedente
+    assert html.count("Minuti al giorno per ora locale in cui il carico era coperto dai pannelli, senza rete.") >= 2
+    assert html.count("Cambi confermati da 3 campioni consecutivi (≈3 min); linea tratteggiata = media.") >= 2
+    # legenda esplicita (il colore non è l'unico indicatore) su entrambi i grafici a barre impilate
+    for anchor in ('id="h-bands"', 'id="h-day"'):
+        block = html.split(anchor, 1)[1].split("</section>", 1)[0]
+        assert 'class="legend"' in block
+        for label in ("FV diretto", "Batteria", "Rete"):
+            assert label in block
+
+
+def test_dashboard_script_parses(tmp_path):
+    import subprocess
+    html = (ROOT / "index.html").read_text()
+    script = html.split("<script>", 1)[1].split("</script>", 1)[0]
+    path = tmp_path / "dashboard.js"
+    path.write_text(script)
+    subprocess.run(["node", "--check", str(path)], check=True)
