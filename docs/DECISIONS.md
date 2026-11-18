@@ -220,3 +220,11 @@ la validazione di comandi PI30, allarmi, codici di errore e specifiche elettrich
 - Limite noto: le ricariche della batteria dalla rete non sono nello storico (`e_grid_wh`
   conta solo il carico in bypass), quindi il costo è una stima per difetto e il valore
   dell'energia coperta da FV+batteria è per eccesso. La dashboard lo dichiara.
+
+## Report offline e simulazioni batteria (2026-11-18)
+
+- **Pacchetto autonomo `analysis/`**: nessun container aggiuntivo, nessuna modifica al bordo (`solarmon.py`, schema DB, dashboard). Il report gira su richiesta su snapshot SQLite.
+- **FV osservato come limite inferiore**: in off-grid l'inverter preleva solo l'energia che carico e carica batteria assorbono. Il potenziale FV a cielo chiaro è modellato con irradianza Haurwitz e calibrazione kWp al 95° percentile.
+- **Diagnostica salute batteria**: la capacità utile non è dedotta dalla tensione (ingannevole su chimiche degradate), ma misurata come energia del ciclo più profondo osservato confrontata con il DoD sano di riferimento (50% di 4,8 kWh = 2,4 kWh).
+- **Banco LiFePO4 compatibile (16 kWh / 51,2 V)**: lo scenario di riferimento simula un banco 16S con DoD 90% (14,4 kWh utili). Richiede l'innalzamento del Programma 02 a 60 A (≈3 kW) per assorbire l'eccedenza solare meridiana; la simulazione include esplicitamente lo scenario a 20 A per quantificare il costo del mancato intervento.
+- **Cautela e affidabilità**: con meno di 7 giorni osservati l'affidabilità è marcata 'bassa', tutte le simulazioni e azioni suggerite sono prefissate come 'Esercizio, non decisione', escludendo qualsiasi estrapolazione annuale non verificata.

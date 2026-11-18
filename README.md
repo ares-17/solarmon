@@ -60,6 +60,20 @@ solarmon/
     └── chat-solarmon-2026-11-13.md  # archivio della chat di progetto
 ```
 
+## Report e simulazioni
+
+Modulo offline per analizzare uno snapshot del database e simulare scenari di accumulo LiFePO4 compatibili con l'inverter, senza toccare il monitoraggio attivo.
+
+```bash
+# Esecuzione report con coordinate impianto (default Cellole CE: 41.201880, 13.849262)
+python3 -m analysis.report --db solar-snapshot.db --config now.json --bill consumu_annuali.csv --out reports/
+```
+
+Il comando genera nella cartella `reports/YYYY-MM-DD_HHMM/`:
+- `report.html`: report autonomo stampabile in PDF con grafici SVG vettoriali.
+- `report.md`: riepilogo sintetico in formato Markdown.
+- `data.json`: tutti i dati e le metriche calcolate in formato JSON.
+
 ## Deploy con Docker
 
 In alternativa all'installazione nativa systemd con `setup.sh`, è possibile avviare l'applicazione in container:

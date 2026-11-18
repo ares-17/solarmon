@@ -14,6 +14,8 @@ solarmon.env
 *.sqlite3
 backups/
 data/
+snapshots/
+reports/
 
 # Dump grezzi dell'inverter (contengono il numero di serie del dispositivo)
 inverter_dump.txt
