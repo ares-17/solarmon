@@ -15,6 +15,13 @@ def test_specs_include_the_compatible_16kwh():
     assert "LFP 16 kWh, carica 20 A" in specs
 
 
+def test_specs_accept_integer_capacities():
+    specs = {s.name: s for s in default_specs((10, 20))}
+    assert "LFP 10 kWh, carica 60 A" in specs
+    assert "LFP 20 kWh, carica 60 A" in specs
+    assert specs["LFP 10 kWh, carica 60 A"].capacity_kwh == 10.0
+
+
 def test_reliability_thresholds():
     assert reliability(1.9) == "bassa"
     assert reliability(7.0) == "media"

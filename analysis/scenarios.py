@@ -73,6 +73,7 @@ def default_specs(capacities: tuple[float, ...] = (10, 16, 20)) -> list[BatteryS
     ]
 
     for cap in capacities:
+        cap = float(cap)
         if cap == 16:
             continue
         specs.append(
